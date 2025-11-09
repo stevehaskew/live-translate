@@ -45,6 +45,45 @@
             font-size: 1.1rem;
         }
 
+        /* Settings toggle button */
+        .settings-toggle {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px;
+            border-radius: 50%;
+            cursor: pointer;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            transition: transform 0.3s ease, background 0.3s ease;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .settings-toggle:hover {
+            background: #5568d3;
+            transform: scale(1.05);
+        }
+
+        .settings-toggle:active {
+            transform: scale(0.95);
+        }
+
+        /* Controls section with collapsible state */
+        .controls-wrapper {
+            margin-bottom: 30px;
+        }
+
+        .controls.collapsed {
+            display: none;
+        }
+
         .controls {
             background: white;
             padding: 25px;
@@ -288,6 +327,89 @@
             cursor: pointer;
             font-weight: 700;
         }
+
+        /* Mobile responsive styles */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
+            header {
+                padding: 15px;
+                margin-bottom: 15px;
+            }
+
+            h1 {
+                font-size: 1.5rem;
+                margin-bottom: 5px;
+            }
+
+            .subtitle {
+                font-size: 0.9rem;
+            }
+
+            .settings-toggle {
+                top: 10px;
+                right: 10px;
+                width: 35px;
+                height: 35px;
+                font-size: 1rem;
+            }
+
+            .controls {
+                padding: 15px;
+                margin-bottom: 15px;
+                gap: 15px;
+            }
+
+            .translation-feed {
+                padding: 15px;
+                min-height: 400px;
+                max-height: 500px;
+            }
+
+            .feed-header h2 {
+                font-size: 1.25rem;
+            }
+
+            .message {
+                padding: 15px;
+                margin-bottom: 10px;
+            }
+
+            .message-text {
+                font-size: 1rem;
+            }
+
+            footer {
+                margin-top: 15px;
+                padding: 15px;
+                font-size: 0.9rem;
+            }
+
+            .warning-banner {
+                padding: 12px;
+                font-size: 0.9rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            h1 {
+                font-size: 1.25rem;
+            }
+
+            .subtitle {
+                font-size: 0.85rem;
+            }
+
+            .controls {
+                padding: 12px;
+            }
+
+            .translation-feed {
+                padding: 12px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -298,6 +420,7 @@
             {% endif %}
             <h1>{{ page_title|safe }}</h1>
             <p class="subtitle">Real-time speech translation powered by AI</p>
+            <button id="settingsToggle" class="settings-toggle" title="Toggle Settings" aria-label="Toggle Settings">⚙️</button>
         </header>
 
         {% if not aws_available %}
@@ -308,7 +431,8 @@
         </div>
         {% endif %}
 
-        <div class="controls">
+        <div class="controls-wrapper">
+            <div class="controls" id="controlsPanel">
             <div class="status">
                 <div class="status-row">
                     <div class="status-indicator" id="statusIndicator"></div>
@@ -338,6 +462,7 @@
                 </select>
             </div>
         </div>
+        </div>
 
         <div class="translation-feed">
             <div class="feed-header">
@@ -361,17 +486,57 @@
     </div>
 
     <script>
-        // Initialize Socket.IO connection
-        const socket = io();
-
         // DOM elements
         const statusIndicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
         const languageSelect = document.getElementById('languageSelect');
         const messageContainer = document.getElementById('messageContainer');
+        const settingsToggle = document.getElementById('settingsToggle');
+        const controlsPanel = document.getElementById('controlsPanel');
 
         let awsAvailable = {{ 'true' if aws_available else 'false' }};
         let messageCount = 0;
+        let socket;
+
+        // Settings panel collapse/expand functionality
+        const SETTINGS_STORAGE_KEY = 'liveTranslateSettingsCollapsed';
+        
+        // Check if user has visited before
+        function hasVisitedBefore() {
+            return localStorage.getItem(SETTINGS_STORAGE_KEY) !== null;
+        }
+
+        // Load settings panel state
+        function loadSettingsState() {
+            const isCollapsed = localStorage.getItem(SETTINGS_STORAGE_KEY) === 'true';
+            
+            // On first visit, show settings expanded
+            // On subsequent visits, restore saved state
+            if (hasVisitedBefore() && isCollapsed) {
+                controlsPanel.classList.add('collapsed');
+            }
+        }
+
+        // Toggle settings panel
+        function toggleSettings() {
+            const isCollapsed = controlsPanel.classList.toggle('collapsed');
+            localStorage.setItem(SETTINGS_STORAGE_KEY, isCollapsed.toString());
+        }
+
+        // Initialize settings toggle button
+        if (settingsToggle) {
+            settingsToggle.addEventListener('click', toggleSettings);
+        }
+
+        // Load initial state
+        loadSettingsState();
+
+        // Initialize Socket.IO connection
+        try {
+            socket = io();
+        } catch (error) {
+            console.error('Failed to initialize Socket.IO:', error);
+        }
 
         // Helper to reset the live feed to the empty state
         function setEmptyState() {
@@ -445,95 +610,103 @@
         }
 
         // Connection status handlers
-        socket.on('connect', () => {
-            console.log('Connected to server');
-            statusIndicator.classList.add('connected');
-            statusIndicator.classList.remove('disconnected');
-            statusText.textContent = 'Connected';
-            statusText.style.color = '#10b981';
+        if (socket) {
+            socket.on('connect', () => {
+                console.log('Connected to server');
+                statusIndicator.classList.add('connected');
+                statusIndicator.classList.remove('disconnected');
+                statusText.textContent = 'Connected';
+                statusText.style.color = '#10b981';
 
-            // Send initial language preference
-            const selectedLanguage = languageSelect.value;
-            socket.emit('set_language', { language: selectedLanguage });
-        });
+                // Send initial language preference
+                const selectedLanguage = languageSelect.value;
+                socket.emit('set_language', { language: selectedLanguage });
+            });
 
-        socket.on('disconnect', () => {
-            console.log('Disconnected from server');
-            statusIndicator.classList.remove('connected');
-            statusIndicator.classList.add('disconnected');
-            statusText.textContent = 'Disconnected';
-            statusText.style.color = '#ef4444';
-        });
+            socket.on('disconnect', () => {
+                console.log('Disconnected from server');
+                statusIndicator.classList.remove('connected');
+                statusIndicator.classList.add('disconnected');
+                statusText.textContent = 'Disconnected';
+                statusText.style.color = '#ef4444';
+            });
 
-        socket.on('connection_status', (data) => {
-            awsAvailable = data.aws_available;
-            console.log('AWS Translate available:', awsAvailable);
-        });
+            socket.on('connection_status', (data) => {
+                awsAvailable = data.aws_available;
+                console.log('AWS Translate available:', awsAvailable);
+            });
+        }
 
         // Language selection handler
         languageSelect.addEventListener('change', (event) => {
             const selectedLanguage = event.target.value;
             console.log('Language changed to:', selectedLanguage);
-            socket.emit('set_language', { language: selectedLanguage });
-        });
-
-        socket.on('language_set', (data) => {
-            console.log('Language preference confirmed:', data.language);
-        });
-
-        // Translation message handler
-        socket.on('translated_text', (data) => {
-            console.log('Received translation:', data);
-            
-            // Remove empty state if this is the first message
-            if (messageCount === 0) {
-                messageContainer.innerHTML = '';
-            }
-            messageCount++;
-
-            // Create message element
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'message';
-
-            const timestamp = document.createElement('div');
-            timestamp.className = 'message-timestamp';
-            timestamp.textContent = data.timestamp || new Date().toLocaleTimeString();
-
-            const text = document.createElement('div');
-            text.className = 'message-text';
-            text.textContent = data.text;
-
-            messageDiv.appendChild(timestamp);
-            messageDiv.appendChild(text);
-
-            // Show original text if translated
-            if (data.language !== 'en' && data.original !== data.text && awsAvailable) {
-                const original = document.createElement('div');
-                original.className = 'message-original';
-                original.textContent = `Original: ${data.original}`;
-                messageDiv.appendChild(original);
-            }
-
-            // Add to container (newest at top)
-            messageContainer.insertBefore(messageDiv, messageContainer.firstChild);
-
-            // Limit to 50 messages
-            while (messageContainer.children.length > 50) {
-                messageContainer.removeChild(messageContainer.lastChild);
+            if (socket) {
+                socket.emit('set_language', { language: selectedLanguage });
             }
         });
 
-        // Error handler
-        socket.on('error', (error) => {
-            console.error('Socket error:', error);
-        });
+        if (socket) {
+            socket.on('language_set', (data) => {
+                console.log('Language preference confirmed:', data.language);
+            });
+
+            // Translation message handler
+            socket.on('translated_text', (data) => {
+                console.log('Received translation:', data);
+                
+                // Remove empty state if this is the first message
+                if (messageCount === 0) {
+                    messageContainer.innerHTML = '';
+                }
+                messageCount++;
+
+                // Create message element
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message';
+
+                const timestamp = document.createElement('div');
+                timestamp.className = 'message-timestamp';
+                timestamp.textContent = data.timestamp || new Date().toLocaleTimeString();
+
+                const text = document.createElement('div');
+                text.className = 'message-text';
+                text.textContent = data.text;
+
+                messageDiv.appendChild(timestamp);
+                messageDiv.appendChild(text);
+
+                // Show original text if translated
+                if (data.language !== 'en' && data.original !== data.text && awsAvailable) {
+                    const original = document.createElement('div');
+                    original.className = 'message-original';
+                    original.textContent = `Original: ${data.original}`;
+                    messageDiv.appendChild(original);
+                }
+
+                // Add to container (newest at top)
+                messageContainer.insertBefore(messageDiv, messageContainer.firstChild);
+
+                // Limit to 50 messages
+                while (messageContainer.children.length > 50) {
+                    messageContainer.removeChild(messageContainer.lastChild);
+                }
+            });
+
+            // Error handler
+            socket.on('error', (error) => {
+                console.error('Socket error:', error);
+            });
+        }
 
         // Handle page visibility to reconnect if needed
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && !socket.connected) {
-                socket.connect();
-            }
-        });
+        if (socket) {
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible' && !socket.connected) {
+                    socket.connect();
+                }
+            });
+        }
 
         console.log('Live Translation client initialized');
     </script>
