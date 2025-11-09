@@ -25,6 +25,7 @@
         }
 
         header {
+            position: relative;
             background: white;
             padding: 30px;
             border-radius: 15px;
@@ -57,6 +58,13 @@
         }
 
         .status {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .status-row {
             display: flex;
             align-items: center;
             gap: 10px;
@@ -234,6 +242,52 @@
         .translation-feed::-webkit-scrollbar-thumb:hover {
             background: #5568d3;
         }
+
+        /* Clear button in the top-right of the header */
+        .clear-btn {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+            transition: transform 0.08s ease, opacity 0.12s ease;
+            align-self: flex-start;
+        }
+
+        .clear-btn:hover {
+            transform: translateY(-1px);
+            opacity: 0.95;
+        }
+
+        /* Undo toast */
+        .undo-toast {
+            position: fixed;
+            right: 24px;
+            bottom: 24px;
+            background: rgba(17,24,39,0.98);
+            color: #fff;
+            padding: 12px 16px;
+            border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            z-index: 9999;
+            font-weight: 600;
+        }
+
+        .undo-toast .undo-btn {
+            background: transparent;
+            color: #67e8f9;
+            border: 1px solid rgba(103,232,249,0.2);
+            padding: 6px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 700;
+        }
     </style>
 </head>
 <body>
@@ -256,8 +310,11 @@
 
         <div class="controls">
             <div class="status">
-                <div class="status-indicator" id="statusIndicator"></div>
-                <span id="statusText">Connecting...</span>
+                <div class="status-row">
+                    <div class="status-indicator" id="statusIndicator"></div>
+                    <span id="statusText">Connecting...</span>
+                </div>
+                <button id="clearLiveBtn" class="clear-btn" title="Clear live feed">Clear Feed</button>
             </div>
 
             <div class="language-selector">
@@ -315,6 +372,77 @@
 
         let awsAvailable = {{ 'true' if aws_available else 'false' }};
         let messageCount = 0;
+
+        // Helper to reset the live feed to the empty state
+        function setEmptyState() {
+            messageContainer.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">🎤</div>
+                    <div class="empty-state-text">Waiting for speech input...</div>
+                </div>
+            `;
+            messageCount = 0;
+        }
+
+        // Undo toast / clear with undo support
+        let lastClearedHTML = null;
+        let undoTimer = null;
+        let toastEl = null;
+        const UNDO_TIMEOUT = 5000; // ms
+
+        function removeToast() {
+            if (toastEl) {
+                toastEl.remove();
+                toastEl = null;
+            }
+            if (undoTimer) {
+                clearTimeout(undoTimer);
+                undoTimer = null;
+            }
+        }
+
+        function restoreCleared() {
+            if (!lastClearedHTML) return;
+            // Append cleared messages after current messages (so newer items stay at top)
+            messageContainer.insertAdjacentHTML('beforeend', lastClearedHTML);
+            // Recalculate messageCount
+            messageCount = messageContainer.querySelectorAll('.message').length;
+            lastClearedHTML = null;
+            removeToast();
+        }
+
+        function showUndoToast() {
+            removeToast();
+            toastEl = document.createElement('div');
+            toastEl.className = 'undo-toast';
+            toastEl.innerHTML = `<span>Feed cleared</span><button class="undo-btn" id="undoBtn">Undo</button>`;
+            document.body.appendChild(toastEl);
+            document.getElementById('undoBtn').addEventListener('click', restoreCleared);
+            undoTimer = setTimeout(() => {
+                lastClearedHTML = null;
+                removeToast();
+            }, UNDO_TIMEOUT);
+        }
+
+        function clearFeedWithUndo() {
+            // Save only if there are messages to restore
+            const hasMessages = messageContainer.querySelector('.message') !== null;
+            if (!hasMessages) {
+                setEmptyState();
+                return;
+            }
+            lastClearedHTML = messageContainer.innerHTML;
+            setEmptyState();
+            showUndoToast();
+        }
+
+        // Wire up the clear button
+        const clearBtn = document.getElementById('clearLiveBtn');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                clearFeedWithUndo();
+            });
+        }
 
         // Connection status handlers
         socket.on('connect', () => {

@@ -243,6 +243,58 @@ Make sure to grant microphone access to Terminal or your Python IDE in System Pr
 3. Check that the AWS region supports Translate service
 4. The application will work in English-only mode if AWS is not configured
 
+## AWS IAM Policy (Translate)
+
+To allow the server to call AWS Translate's TranslateText API, attach a minimal IAM policy to the role or user the server runs under (for example: ECS task role, EC2 instance profile, or Lambda execution role). AWS Translate actions are service-level and do not support resource-level ARNs, so the policy uses a wildcard resource.
+
+Minimal policy (TranslateText only):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "translate:TranslateText",
+        "comprehend:DetectDominantLanguage"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+Optional: restrict to a single region (example `us-east-1`) using a condition:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "translate:TranslateText",
+        "comprehend:DetectDominantLanguage"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "us-east-1"
+        }
+      }
+    }
+  ]
+}
+```
+
+Recommendations
+- Attach this policy to an IAM role rather than distributing long-lived user credentials.
+- For ECS, use a task role; for EKS use IRSA; for EC2 use an instance profile; for Lambda attach to the execution role.
+- Monitor and log Translate API usage with CloudTrail.
+- Never commit credentials into source control; use the role or a secret manager.
+
+
 ### Connection Issues
 
 If the speech-to-text app can't connect to the server:

@@ -40,4 +40,4 @@ EXPOSE 5050
 
 # Run the server with Gunicorn using the eventlet worker (works with Flask-SocketIO)
 # Bind address/port come from the server config (default 0.0.0.0:5050)
-CMD ["sh", "-c", "exec gunicorn -k gevent -w ${GUNICORN_WORKERS} -b 0.0.0.0:${FLASK_PORT} server:app"]
+CMD gunicorn -k "geventwebsocket.gunicorn.workers.GeventWebSocketWorker" -w ${GUNICORN_WORKERS} -b 0.0.0.0:${FLASK_PORT} patched:app
