@@ -7,6 +7,11 @@ Simulates speech input by sending test messages to the server.
 import socketio
 import time
 import sys
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Sample test phrases
 TEST_PHRASES = [
@@ -26,11 +31,20 @@ def test_connection(server_url='http://localhost:5000'):
     Args:
         server_url: URL of the Flask server
     """
+    # Load API key from environment
+    api_key = os.environ.get('API_KEY')
+    
     print("="*60)
     print("Live Translation - Test Script")
     print("="*60)
     print(f"\nServer URL: {server_url}")
     print(f"Number of test phrases: {len(TEST_PHRASES)}")
+    
+    if not api_key:
+        print("\n⚠ Warning: API_KEY not set in environment.")
+        print("Communication with the server will not be secured.")
+        print("Set API_KEY in .env file for production use.")
+    
     print("\nThis script will send test messages to simulate speech input.")
     print("-"*60)
     
@@ -49,6 +63,10 @@ def test_connection(server_url='http://localhost:5000'):
     def on_connect_error(data):
         print(f"✗ Connection error: {data}")
     
+    @sio.on('error')
+    def on_error(data):
+        print(f"✗ Error from server: {data}")
+    
     try:
         # Connect to server
         print("\nConnecting to server...")
@@ -61,10 +79,14 @@ def test_connection(server_url='http://localhost:5000'):
             timestamp = time.strftime("%H:%M:%S")
             print(f"[{timestamp}] Phrase {i}/{len(TEST_PHRASES)}: {phrase}")
             
-            sio.emit('new_text', {
+            payload = {
                 'text': phrase,
                 'timestamp': timestamp
-            })
+            }
+            if api_key:
+                payload['api_key'] = api_key
+            
+            sio.emit('new_text', payload)
             
             # Wait between messages
             time.sleep(3)
