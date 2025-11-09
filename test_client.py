@@ -24,81 +24,78 @@ TEST_PHRASES = [
 ]
 
 
-def test_connection(server_url='http://localhost:5050'):
+def test_connection(server_url="http://localhost:5050"):
     """
     Test the connection to the server and send sample messages.
-    
+
     Args:
         server_url: URL of the Flask server
     """
     # Load API key from environment
-    api_key = os.environ.get('API_KEY')
-    
-    print("="*60)
+    api_key = os.environ.get("API_KEY")
+
+    print("=" * 60)
     print("Live Translation - Test Script")
-    print("="*60)
+    print("=" * 60)
     print(f"\nServer URL: {server_url}")
     print(f"Number of test phrases: {len(TEST_PHRASES)}")
-    
+
     if not api_key:
         print("\n⚠ Warning: API_KEY not set in environment.")
         print("Communication with the server will not be secured.")
         print("Set API_KEY in .env file for production use.")
-    
+
     print("\nThis script will send test messages to simulate speech input.")
-    print("-"*60)
-    
+    print("-" * 60)
+
     # Create SocketIO client
     sio = socketio.Client()
-    
-    @sio.on('connect')
+
+    @sio.on("connect")
     def on_connect():
         print("✓ Connected to server")
-    
-    @sio.on('disconnect')
+
+    @sio.on("disconnect")
     def on_disconnect():
         print("✗ Disconnected from server")
-    
-    @sio.on('connect_error')
+
+    @sio.on("connect_error")
     def on_connect_error(data):
         print(f"✗ Connection error: {data}")
-    
-    @sio.on('error')
+
+    @sio.on("error")
     def on_error(data):
         print(f"✗ Error from server: {data}")
-    
+
     try:
         # Connect to server
         print("\nConnecting to server...")
         sio.connect(server_url)
         time.sleep(1)
-        
+
         # Send test phrases
         print("\nSending test phrases:\n")
         for i, phrase in enumerate(TEST_PHRASES, 1):
             timestamp = time.strftime("%H:%M:%S")
             print(f"[{timestamp}] Phrase {i}/{len(TEST_PHRASES)}: {phrase}")
-            
-            payload = {
-                'text': phrase,
-                'timestamp': timestamp
-            }
+
+            payload = {"text": phrase, "timestamp": timestamp}
             if api_key:
-                payload['api_key'] = api_key
-            
-            sio.emit('new_text', payload)
-            
+                payload["api_key"] = api_key
+
+            sio.emit("new_text", payload)
+
             # Wait between messages
             time.sleep(3)
-        
-        print("\n" + "="*60)
+
+        print("\n" + "=" * 60)
         print("✓ All test phrases sent successfully!")
-        print("="*60)
+        print("=" * 60)
         print("\nCheck the web interface to see the translations.")
         print("The script will disconnect in 5 seconds...")
-        
+
         time.sleep(5)
-        
+
     except KeyboardInterrupt:
         print("\n\nTest interrupted by user.")
     except Exception as e:
@@ -112,12 +109,12 @@ def test_connection(server_url='http://localhost:5050'):
 def main():
     """Main entry point."""
     # Parse command line arguments
-    server_url = 'http://localhost:5050'
+    server_url = "http://localhost:5050"
     if len(sys.argv) > 1:
         server_url = sys.argv[1]
-    
+
     test_connection(server_url)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
