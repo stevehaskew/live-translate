@@ -222,6 +222,10 @@ brew install portaudio
 
 # Then install PyAudio with specific flags
 pip install --global-option='build_ext' --global-option='-I/opt/homebrew/include' --global-option='-L/opt/homebrew/lib' pyaudio
+
+# You may need to install flac (on macOS silicon devices), which is a dependency of the SpeechRecognition library
+brew install flac
+
 ```
 
 ### aifc Deprecation Warning

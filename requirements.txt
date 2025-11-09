@@ -2,6 +2,7 @@
 Flask==3.1.2
 Flask-SocketIO==5.5.1
 python-socketio==5.14.3
+requests==2.32.5
 
 # Speech recognition
 SpeechRecognition==3.14.3
