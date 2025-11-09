@@ -1,0 +1,17 @@
+# Core dependencies
+Flask==3.0.0
+Flask-SocketIO==5.3.5
+python-socketio==5.10.0
+
+# Speech recognition
+SpeechRecognition==3.10.1
+PyAudio==0.2.14
+
+# AWS Translation
+boto3==1.34.34
+
+# WebSocket support
+eventlet==0.33.3
+
+# Configuration
+python-dotenv==1.0.0
