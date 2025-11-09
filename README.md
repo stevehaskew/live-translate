@@ -232,13 +232,19 @@ If the speech-to-text app can't connect to the server:
 
 If you get an error about invalid async_mode when starting the server:
 
-The application uses Flask-SocketIO's default threading mode, which works out of the box. If you want better performance with more concurrent connections, you can optionally install eventlet:
+The application uses Flask-SocketIO's default threading mode, which works out of the box. For better performance with more concurrent connections, you can optionally install an async library:
 
+**Recommended: gevent** (better performance and stability)
+```bash
+pip install gevent gevent-websocket
+```
+
+**Alternative: eventlet**
 ```bash
 pip install eventlet
 ```
 
-The server will automatically detect and use eventlet if it's installed. No configuration changes needed.
+The server will automatically detect and use gevent or eventlet if installed. No configuration changes needed.
 
 ## Development
 
@@ -265,6 +271,21 @@ Enable Flask debug mode by setting in `.env`:
 ```
 FLASK_DEBUG=True
 ```
+
+### Performance Optimization
+
+For production use or handling many concurrent connections, install gevent for better performance:
+
+```bash
+pip install gevent gevent-websocket
+```
+
+Flask-SocketIO will automatically detect and use gevent, providing:
+- Better scalability with concurrent WebSocket connections
+- Lower memory usage per connection
+- Improved performance for real-time updates
+
+The application works fine with the default threading mode for testing and small deployments.
 
 ## Security Notes
 
