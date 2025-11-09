@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Translation</title>
+    <title>{{ page_title|safe }}</title>
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <style>
         * {
@@ -239,7 +239,10 @@
 <body>
     <div class="container">
         <header>
-            <h1>🌍 Live Translation</h1>
+            {% if logo_file %}
+                <img src="{{ logo_file }}" alt="Logo" style="max-height: 80px; margin-bottom: 15px;">
+            {% endif %}
+            <h1>{{ page_title|safe }}</h1>
             <p class="subtitle">Real-time speech translation powered by AI</p>
         </header>
 
@@ -292,7 +295,11 @@
         </div>
 
         <footer>
-            <p>Speak into the microphone on the source device to see translations appear here in real-time.</p>
+            {% if contact_text %}
+                <p>For more assistance please contact {{ contact_text }}</p>
+            {% else %}
+                <p>For more assistance please contact your support team</p>
+            {% endif %}
         </footer>
     </div>
 
