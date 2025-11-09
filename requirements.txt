@@ -10,8 +10,9 @@ PyAudio==0.2.14
 # AWS Translation
 boto3==1.34.34
 
-# WebSocket support
-eventlet==0.33.3
+# WebSocket async support (optional - threading mode is used by default)
+# Uncomment if you want to use eventlet for better performance:
+# eventlet==0.33.3
 
 # Configuration
 python-dotenv==1.0.0

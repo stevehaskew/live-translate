@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
 
-# Initialize SocketIO with eventlet
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+# Initialize SocketIO (auto-detects best async mode)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Initialize AWS Translate client
 try:

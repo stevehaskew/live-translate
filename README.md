@@ -228,6 +228,18 @@ If the speech-to-text app can't connect to the server:
 2. Check firewall settings
 3. Verify the server URL is correct
 
+### SocketIO Async Mode Issues
+
+If you get an error about invalid async_mode when starting the server:
+
+The application uses Flask-SocketIO's default threading mode, which works out of the box. If you want better performance with more concurrent connections, you can optionally install eventlet:
+
+```bash
+pip install eventlet
+```
+
+The server will automatically detect and use eventlet if it's installed. No configuration changes needed.
+
 ## Development
 
 ### Project Structure
