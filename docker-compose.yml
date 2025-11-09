@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: yot:latest
+    container_name: yot
+    env_file:
+      - .env
+    environment:
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-1}
+      - FLASK_PORT=5050
+    ports:
+      - "5050:5050"
+    restart: unless-stopped
