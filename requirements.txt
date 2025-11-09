@@ -1,0 +1,22 @@
+# Core dependencies
+Flask==3.1.2
+Flask-SocketIO==5.5.1
+python-socketio==5.14.3
+
+# Speech recognition
+SpeechRecognition==3.14.3
+PyAudio==0.2.14
+
+# AWS Translation
+boto3==1.40.69
+
+# WebSocket async support (optional - threading mode is used by default)
+# For better performance with concurrent connections, install gevent (recommended):
+# gevent==24.2.1
+# gevent-websocket==0.10.1
+# 
+# Alternatively, you can use eventlet:
+# eventlet==0.33.3
+
+# Configuration
+python-dotenv==1.2.1
