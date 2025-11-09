@@ -109,6 +109,16 @@ The application will:
 
 Now speak into your microphone, and the text will appear in real-time on all connected web clients, translated to their selected languages.
 
+### Testing Without a Microphone
+
+If you want to test the system without a microphone or speech input, use the test client:
+
+```bash
+python test_client.py
+```
+
+This will send sample phrases to the server, allowing you to see how the translation system works.
+
 ### Command Line Options
 
 **Web Server**:
@@ -213,6 +223,7 @@ If the speech-to-text app can't connect to the server:
 live-translate/
 ├── speech_to_text.py      # Speech recognition application
 ├── server.py              # Flask web server
+├── test_client.py         # Test script (no microphone needed)
 ├── templates/
 │   └── index.html        # Web interface
 ├── requirements.txt       # Python dependencies
