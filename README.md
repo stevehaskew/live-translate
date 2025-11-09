@@ -110,13 +110,13 @@ In one terminal window, start the Flask server:
 python server.py
 ```
 
-The server will start on `http://localhost:5000` by default.
+The server will start on `http://localhost:5050` by default.
 
 ### Step 2: Open the Web Interface
 
 Open a web browser and navigate to:
 ```
-http://localhost:5000
+http://localhost:5050
 ```
 
 You can open multiple browser windows/tabs to simulate multiple users with different language preferences.
@@ -151,13 +151,13 @@ This will send sample phrases to the server, allowing you to see how the transla
 **Web Server**:
 ```bash
 # Use environment variables or .env file
-FLASK_HOST=0.0.0.0 FLASK_PORT=5000 python server.py
+FLASK_HOST=0.0.0.0 FLASK_PORT=5050 python server.py
 ```
 
 **Speech-to-Text Application**:
 ```bash
 # Connect to a remote server
-python speech_to_text.py http://example.com:5000
+python speech_to_text.py http://example.com:5050
 ```
 
 ## Supported Languages

@@ -214,7 +214,7 @@ def handle_request_translation(data):
 def main():
     """Run the Flask server."""
     host = os.environ.get('FLASK_HOST', '0.0.0.0')
-    port = int(os.environ.get('FLASK_PORT', 5000))
+    port = int(os.environ.get('FLASK_PORT', 5050))
     debug = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
     
     logger.info("="*60)
