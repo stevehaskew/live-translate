@@ -65,14 +65,26 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-4. **Configure AWS credentials** (optional, for translation):
+4. **Configure environment variables**:
 
 Create a `.env` file from the example:
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and add your AWS credentials:
+Edit `.env` and configure the following:
+
+**Security (Required for Production)**:
+```
+API_KEY=your-secure-api-key-here
+```
+The API key secures communication between the speech-to-text client and the server. Generate a strong random key and use the same value on both sides. Example:
+```bash
+# Generate a secure random API key (macOS/Linux)
+openssl rand -base64 32
+```
+
+**AWS Credentials (Optional, for translation)**:
 ```
 AWS_ACCESS_KEY_ID=your_access_key_here
 AWS_SECRET_ACCESS_KEY=your_secret_key_here
@@ -84,7 +96,9 @@ Alternatively, use AWS CLI to configure credentials:
 aws configure
 ```
 
-**Note**: The application works without AWS credentials, but translation will be disabled (English-only mode).
+**Note**: 
+- The application works without AWS credentials, but translation will be disabled (English-only mode).
+- Without an API_KEY set, the server will accept text from any client. Set API_KEY for production deployments.
 
 ## Usage
 
@@ -297,10 +311,27 @@ The application works fine with the default threading mode for testing and small
 
 ## Security Notes
 
+### API Key Authentication
+
+The application uses API key authentication to secure text input between the speech-to-text client and the server:
+
+- **Required for Production**: Always set `API_KEY` in your `.env` file for production deployments
+- **Same Key Required**: The API key must be identical in both the server and client `.env` files
+- **Key Generation**: Use a cryptographically secure random generator to create your API key:
+  ```bash
+  # Generate a secure random API key (macOS/Linux)
+  openssl rand -base64 32
+  ```
+- **Warning Mode**: If no API_KEY is set, both server and client will display warnings and operate in an unsecured mode
+
+### General Security Best Practices
+
 - Never commit `.env` file or AWS credentials to version control
 - Use IAM roles with minimal permissions for production deployments
 - Consider using AWS Secrets Manager for credential management in production
 - Implement authentication for production web interface
+- Rotate API keys periodically
+- Use HTTPS/WSS in production environments
 
 ## License
 

@@ -8,25 +8,32 @@ import speech_recognition as sr
 import socketio
 import time
 import sys
+import os
 from datetime import datetime
+from dotenv import load_dotenv
 import threading
 import queue
+
+# Load environment variables
+load_dotenv()
 
 
 class SpeechToText:
     """Handles speech recognition and broadcasts text to server."""
     
-    def __init__(self, server_url='http://localhost:5050'):
+    def __init__(self, server_url='http://localhost:5000', api_key=None):
         """
         Initialize the speech recognition system.
         
         Args:
             server_url: URL of the Flask server for broadcasting text
+            api_key: API key for authentication (defaults to API_KEY env variable)
         """
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone()
         self.sio = socketio.Client()
         self.server_url = server_url
+        self.api_key = api_key or os.environ.get('API_KEY')
         self.is_running = False
         
         # Adjust recognizer settings for better performance
@@ -96,7 +103,10 @@ class SpeechToText:
                     
                     # Broadcast to server
                     if self.sio.connected:
-                        self.sio.emit('new_text', {'text': text, 'timestamp': timestamp})
+                        payload = {'text': text, 'timestamp': timestamp}
+                        if self.api_key:
+                            payload['api_key'] = self.api_key
+                        self.sio.emit('new_text', payload)
                     else:
                         print("⚠ Not connected to server. Attempting to reconnect...")
                         self.connect_to_server()
@@ -167,6 +177,12 @@ class SpeechToText:
     def run(self):
         """Run the speech-to-text application."""
         try:
+            # Check API key configuration
+            if not self.api_key:
+                print("\n⚠ Warning: API_KEY not set in environment.")
+                print("Communication with the server will not be secured.")
+                print("Set API_KEY in .env file for production use.\n")
+            
             # Connect to server
             if not self.connect_to_server():
                 print("\n⚠ Warning: Could not connect to server.")
