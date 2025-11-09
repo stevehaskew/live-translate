@@ -7,7 +7,7 @@ Tests command-line parsing and environment variable handling.
 import os
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, call
 from io import StringIO
 
 # Import the module to test
@@ -28,6 +28,47 @@ class TestAudioDeviceSelection(unittest.TestCase):
         # Clear any LT_AUDIO_DEVICE that was set during tests
         if 'LT_AUDIO_DEVICE' in os.environ:
             del os.environ['LT_AUDIO_DEVICE']
+    
+    def test_get_input_devices_filters_correctly(self):
+        """Test that get_input_devices only returns input devices."""
+        mock_pyaudio = MagicMock()
+        mock_audio_instance = MagicMock()
+        mock_pyaudio.PyAudio.return_value = mock_audio_instance
+        
+        # Mock 4 devices: 2 inputs, 1 output, 1 both
+        mock_audio_instance.get_device_count.return_value = 4
+        mock_audio_instance.get_device_info_by_index.side_effect = [
+            {'name': 'Built-in Mic', 'maxInputChannels': 2, 'maxOutputChannels': 0},  # Input only
+            {'name': 'Speakers', 'maxInputChannels': 0, 'maxOutputChannels': 2},      # Output only
+            {'name': 'USB Mic', 'maxInputChannels': 1, 'maxOutputChannels': 0},       # Input only
+            {'name': 'Headset', 'maxInputChannels': 1, 'maxOutputChannels': 2},       # Both
+        ]
+        
+        # Patch the import inside the function
+        with patch.dict('sys.modules', {'pyaudio': mock_pyaudio}):
+            devices = speech_to_text.get_input_devices()
+        
+        # Should return 3 devices (all with maxInputChannels > 0)
+        self.assertEqual(len(devices), 3)
+        self.assertEqual(devices[0][1], 'Built-in Mic')
+        self.assertEqual(devices[1][1], 'USB Mic')
+        self.assertEqual(devices[2][1], 'Headset')
+    
+    def test_find_device_index_by_name(self):
+        """Test finding device index by name."""
+        mock_devices = [
+            (0, 'Built-in Mic', {'maxInputChannels': 2}),
+            (2, 'USB Microphone', {'maxInputChannels': 1}),
+            (5, 'Headset', {'maxInputChannels': 1}),
+        ]
+        
+        with patch('speech_to_text.get_input_devices', return_value=mock_devices):
+            # Test finding existing device
+            self.assertEqual(speech_to_text.find_device_index_by_name('USB Microphone'), 2)
+            self.assertEqual(speech_to_text.find_device_index_by_name('Headset'), 5)
+            
+            # Test non-existent device
+            self.assertIsNone(speech_to_text.find_device_index_by_name('NonExistent'))
     
     def test_speech_to_text_with_device_index(self):
         """Test that SpeechToText accepts and stores device_index."""
@@ -111,13 +152,36 @@ class TestAudioDeviceSelection(unittest.TestCase):
             device_index=2
         )
     
-    @patch('sys.argv', ['speech_to_text.py'])
+    @patch('sys.argv', ['speech_to_text.py', '-d', 'USB Microphone'])
+    @patch('speech_to_text.find_device_index_by_name')
+    @patch('speech_to_text.SpeechToText')
+    def test_device_by_name(self, mock_stt_class, mock_find_device):
+        """Test selecting device by name."""
+        # Mock finding the device
+        mock_find_device.return_value = 3
+        
+        mock_stt_instance = MagicMock()
+        mock_stt_class.return_value = mock_stt_instance
+        
+        speech_to_text.main()
+        
+        # Verify find_device_index_by_name was called
+        mock_find_device.assert_called_once_with('USB Microphone')
+        
+        # Verify SpeechToText was called with found device_index
+        mock_stt_class.assert_called_once_with(
+            server_url='http://localhost:5050',
+            device_index=3
+        )
+    
+    @patch('sys.argv', ['speech_to_text.py', '-d', 'NonExistent'])
+    @patch('speech_to_text.find_device_index_by_name')
     @patch('speech_to_text.SpeechToText')
     @patch('sys.stdout', new_callable=StringIO)
-    def test_invalid_env_variable(self, mock_stdout, mock_stt_class):
-        """Test that invalid LT_AUDIO_DEVICE shows warning."""
-        # Set invalid environment variable
-        os.environ['LT_AUDIO_DEVICE'] = 'invalid'
+    def test_device_name_not_found(self, mock_stdout, mock_stt_class, mock_find_device):
+        """Test warning when device name is not found."""
+        # Mock device not found
+        mock_find_device.return_value = None
         
         mock_stt_instance = MagicMock()
         mock_stt_class.return_value = mock_stt_instance
@@ -126,12 +190,34 @@ class TestAudioDeviceSelection(unittest.TestCase):
         
         # Verify warning was printed
         output = mock_stdout.getvalue()
-        self.assertIn("Invalid LT_AUDIO_DEVICE", output)
+        self.assertIn("Audio device 'NonExistent' not found", output)
         
         # Verify SpeechToText was called with None (default)
         mock_stt_class.assert_called_once_with(
             server_url='http://localhost:5050',
             device_index=None
+        )
+    
+    @patch('sys.argv', ['speech_to_text.py'])
+    @patch('speech_to_text.find_device_index_by_name')
+    @patch('speech_to_text.SpeechToText')
+    def test_env_variable_with_name(self, mock_stt_class, mock_find_device):
+        """Test that LT_AUDIO_DEVICE environment variable works with device name."""
+        # Set environment variable with device name
+        os.environ['LT_AUDIO_DEVICE'] = 'USB Microphone'
+        
+        # Mock finding the device
+        mock_find_device.return_value = 2
+        
+        mock_stt_instance = MagicMock()
+        mock_stt_class.return_value = mock_stt_instance
+        
+        speech_to_text.main()
+        
+        # Verify SpeechToText was called with device_index from name lookup
+        mock_stt_class.assert_called_once_with(
+            server_url='http://localhost:5050',
+            device_index=2
         )
     
     @patch('sys.argv', ['speech_to_text.py', '-d', '1', 'http://example.com:8080'])
@@ -149,14 +235,14 @@ class TestAudioDeviceSelection(unittest.TestCase):
             device_index=1
         )
     
-    @patch('speech_to_text.sr.Microphone')
-    def test_list_audio_devices_success(self, mock_microphone):
-        """Test list_audio_devices with available devices."""
-        # Mock list_microphone_names to return some devices
-        mock_microphone.list_microphone_names.return_value = [
-            'Device 0: Built-in Microphone',
-            'Device 1: USB Microphone',
-            'Device 2: Virtual Input'
+    @patch('speech_to_text.get_input_devices')
+    def test_list_audio_devices_success(self, mock_get_devices):
+        """Test list_audio_devices with available input devices."""
+        # Mock input devices (index, name, info)
+        mock_get_devices.return_value = [
+            (0, 'Built-in Microphone', {'maxInputChannels': 2}),
+            (2, 'USB Microphone', {'maxInputChannels': 1}),
+            (5, 'Virtual Input', {'maxInputChannels': 1}),
         ]
         
         # Capture stdout
@@ -166,16 +252,16 @@ class TestAudioDeviceSelection(unittest.TestCase):
             
             # Verify output contains device list
             self.assertIn('Available Audio Input Devices', output)
-            self.assertIn('0: Device 0: Built-in Microphone', output)
-            self.assertIn('1: Device 1: USB Microphone', output)
-            self.assertIn('2: Device 2: Virtual Input', output)
-            self.assertIn('Total devices: 3', output)
+            self.assertIn('0: Built-in Microphone', output)
+            self.assertIn('2: USB Microphone', output)
+            self.assertIn('5: Virtual Input', output)
+            self.assertIn('Total input devices: 3', output)
     
-    @patch('speech_to_text.sr.Microphone')
-    def test_list_audio_devices_error(self, mock_microphone):
+    @patch('speech_to_text.get_input_devices')
+    def test_list_audio_devices_error(self, mock_get_devices):
         """Test list_audio_devices when PyAudio is not available."""
-        # Mock list_microphone_names to raise an exception
-        mock_microphone.list_microphone_names.side_effect = Exception('Could not find PyAudio')
+        # Mock exception
+        mock_get_devices.side_effect = Exception('Could not find PyAudio; check installation')
         
         # Capture stdout
         with patch('sys.stdout', new=StringIO()) as mock_stdout:
