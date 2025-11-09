@@ -41,13 +41,26 @@ git clone https://github.com/stevehaskew/live-translate.git
 cd live-translate
 ```
 
-2. **Create a virtual environment** (recommended):
+2. **Quick Start (Recommended for macOS/Linux)**:
+```bash
+./start.sh
+```
+This script will automatically:
+- Check Python version
+- Install PortAudio on macOS (if needed)
+- Create a virtual environment
+- Install dependencies
+- Provide instructions to start the application
+
+3. **Manual Installation**:
+
+Create a virtual environment (recommended):
 ```bash
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. **Install dependencies**:
+Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
@@ -224,6 +237,7 @@ live-translate/
 ├── speech_to_text.py      # Speech recognition application
 ├── server.py              # Flask web server
 ├── test_client.py         # Test script (no microphone needed)
+├── start.sh               # Quick start script (macOS/Linux)
 ├── templates/
 │   └── index.html        # Web interface
 ├── requirements.txt       # Python dependencies
