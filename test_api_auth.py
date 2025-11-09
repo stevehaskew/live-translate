@@ -27,8 +27,7 @@ class TestAPIKeyAuthentication(unittest.TestCase):
 
     @patch("server.socketio")
     @patch("server.emit")
-    @patch("server.request")
-    def test_new_text_with_valid_api_key(self, mock_request, mock_emit, mock_socketio):
+    def test_new_text_with_valid_api_key(self, mock_emit, mock_socketio):
         """Test that new_text succeeds with valid API key."""
         # Set up API key in environment
         os.environ["API_KEY"] = "test-api-key-123"
@@ -38,8 +37,8 @@ class TestAPIKeyAuthentication(unittest.TestCase):
         import server
 
         importlib.reload(server)
-
-        # Mock request sid
+        # Mock request sid by injecting a fake request object into the server module
+        mock_request = MagicMock()
         mock_request.sid = "test-client-123"
 
         # Test data with valid API key
@@ -52,16 +51,24 @@ class TestAPIKeyAuthentication(unittest.TestCase):
         # Mock connected clients
         server.connected_clients = {"client1": {"language": "en"}}
 
-        # Call the handler
-        server.handle_new_text(data)
+        # Inject and call the handler, restoring original request afterwards
+        orig_request = server.__dict__.get('request', None)
+        try:
+            server.__dict__['request'] = mock_request
+            server.handle_new_text(data)
+        finally:
+            if orig_request is None:
+                # remove if it wasn't present
+                server.__dict__.pop('request', None)
+            else:
+                server.__dict__['request'] = orig_request
 
         # Verify socketio.emit was called (translation was broadcasted)
         server.socketio.emit.assert_called()
 
     @patch("server.emit")
-    @patch("server.request")
     @patch("server.logger")
-    def test_new_text_with_invalid_api_key(self, mock_logger, mock_request, mock_emit):
+    def test_new_text_with_invalid_api_key(self, mock_logger, mock_emit):
         """Test that new_text is rejected with invalid API key."""
         # Set up API key in environment
         os.environ["API_KEY"] = "test-api-key-123"
@@ -71,8 +78,8 @@ class TestAPIKeyAuthentication(unittest.TestCase):
         import server
 
         importlib.reload(server)
-
-        # Mock request sid
+        # Mock request sid by injecting a fake request object into the server module
+        mock_request = MagicMock()
         mock_request.sid = "test-client-456"
 
         # Test data with invalid API key
@@ -82,8 +89,16 @@ class TestAPIKeyAuthentication(unittest.TestCase):
             "api_key": "wrong-api-key",
         }
 
-        # Call the handler
-        server.handle_new_text(data)
+        # Inject and call the handler, restoring original request afterwards
+        orig_request = server.__dict__.get('request', None)
+        try:
+            server.__dict__['request'] = mock_request
+            server.handle_new_text(data)
+        finally:
+            if orig_request is None:
+                server.__dict__.pop('request', None)
+            else:
+                server.__dict__['request'] = orig_request
 
         # Verify error was emitted
         mock_emit.assert_called_once()
@@ -95,8 +110,7 @@ class TestAPIKeyAuthentication(unittest.TestCase):
         mock_logger.warning.assert_called()
 
     @patch("server.emit")
-    @patch("server.request")
-    def test_new_text_with_missing_api_key(self, mock_request, mock_emit):
+    def test_new_text_with_missing_api_key(self, mock_emit):
         """Test that new_text is rejected when API key is missing from request."""
         # Set up API key in environment
         os.environ["API_KEY"] = "test-api-key-123"
@@ -106,15 +120,23 @@ class TestAPIKeyAuthentication(unittest.TestCase):
         import server
 
         importlib.reload(server)
-
-        # Mock request sid
+        # Mock request sid by injecting a fake request object into the server module
+        mock_request = MagicMock()
         mock_request.sid = "test-client-789"
 
         # Test data without API key
         data = {"text": "Hello world", "timestamp": "12:00:00"}
 
-        # Call the handler
-        server.handle_new_text(data)
+        # Inject and call the handler, restoring original request afterwards
+        orig_request = server.__dict__.get('request', None)
+        try:
+            server.__dict__['request'] = mock_request
+            server.handle_new_text(data)
+        finally:
+            if orig_request is None:
+                server.__dict__.pop('request', None)
+            else:
+                server.__dict__['request'] = orig_request
 
         # Verify error was emitted
         mock_emit.assert_called_once()
@@ -123,8 +145,7 @@ class TestAPIKeyAuthentication(unittest.TestCase):
         self.assertIn("Unauthorized", call_args[0][1]["message"])
 
     @patch("server.socketio")
-    @patch("server.request")
-    def test_new_text_without_api_key_configured(self, mock_request, mock_socketio):
+    def test_new_text_without_api_key_configured(self, mock_socketio):
         """Test that new_text works without API key when not configured."""
         # Ensure no API key is set
         if "API_KEY" in os.environ:
@@ -135,8 +156,8 @@ class TestAPIKeyAuthentication(unittest.TestCase):
         import server
 
         importlib.reload(server)
-
-        # Mock request sid
+        # Mock request sid by injecting a fake request object into the server module
+        mock_request = MagicMock()
         mock_request.sid = "test-client-000"
 
         # Test data without API key
@@ -145,8 +166,16 @@ class TestAPIKeyAuthentication(unittest.TestCase):
         # Mock connected clients
         server.connected_clients = {"client1": {"language": "en"}}
 
-        # Call the handler - should not raise error
-        server.handle_new_text(data)
+        # Inject and call the handler, restoring original request afterwards
+        orig_request = server.__dict__.get('request', None)
+        try:
+            server.__dict__['request'] = mock_request
+            server.handle_new_text(data)
+        finally:
+            if orig_request is None:
+                server.__dict__.pop('request', None)
+            else:
+                server.__dict__['request'] = orig_request
 
         # Verify socketio.emit was called (translation was broadcasted)
         server.socketio.emit.assert_called()
