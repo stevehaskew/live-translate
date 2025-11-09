@@ -94,6 +94,12 @@ python -m unittest test_api_auth
 - Keep functions focused and modular
 - Use meaningful variable names
 
+### Commit Messages
+- Use present tense (e.g., "Add feature", "Fix bug")
+- Reference issues when applicable (e.g., "Fixes #123")
+- Keep messages concise but descriptive
+- Use "conventional commit" format for messages
+
 ### Security Practices
 
 - **Never commit secrets**: Use `.env` for sensitive data
