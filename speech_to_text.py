@@ -9,6 +9,8 @@ import socketio
 import time
 import sys
 from datetime import datetime
+import threading
+import queue
 
 
 class SpeechToText:
@@ -31,6 +33,12 @@ class SpeechToText:
         self.recognizer.energy_threshold = 4000
         self.recognizer.dynamic_energy_threshold = True
         self.recognizer.pause_threshold = 0.8
+        
+        # Queue for passing audio data between threads
+        self.audio_queue = queue.Queue()
+        
+        # Thread for processing speech recognition
+        self.recognition_thread = None
         
         # Setup SocketIO event handlers
         self.setup_socketio()
@@ -69,23 +77,15 @@ class SpeechToText:
         
         print(f"✓ Calibration complete. Energy threshold: {self.recognizer.energy_threshold}")
     
-    def listen_and_transcribe(self):
+    def process_recognition(self):
         """
-        Main loop: Listen for audio and transcribe speech to text.
-        Broadcasts recognized text to the server.
+        Worker thread that processes audio recognition from the queue.
+        Runs continuously until is_running is False and queue is empty.
         """
-        self.is_running = True
-        print("\n" + "="*60)
-        print("SPEECH-TO-TEXT LIVE TRANSLATION")
-        print("="*60)
-        print("\nListening... Speak into your microphone.")
-        print("Press Ctrl+C to stop.\n")
-        
-        while self.is_running:
+        while self.is_running or not self.audio_queue.empty():
             try:
-                with self.microphone as source:
-                    # Listen for audio
-                    audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                # Get audio from queue with timeout to allow checking is_running
+                audio = self.audio_queue.get(timeout=0.5)
                 
                 try:
                     # Recognize speech using Google Speech Recognition
@@ -107,6 +107,45 @@ class SpeechToText:
                 except sr.RequestError as e:
                     print(f"✗ Could not request results from speech recognition service: {e}")
                     time.sleep(1)
+                except Exception as e:
+                    print(f"✗ Recognition error: {e}")
+                
+                # Mark task as done
+                self.audio_queue.task_done()
+                
+            except queue.Empty:
+                # No audio in queue, continue loop
+                continue
+            except Exception as e:
+                print(f"✗ Error in recognition thread: {e}")
+                time.sleep(1)
+    
+    def listen_and_transcribe(self):
+        """
+        Main loop: Listen for audio and queue it for transcription.
+        Recognition is done in a separate thread to avoid listening delays.
+        """
+        self.is_running = True
+        
+        # Start the recognition worker thread
+        self.recognition_thread = threading.Thread(target=self.process_recognition, daemon=True)
+        self.recognition_thread.start()
+        
+        print("\n" + "="*60)
+        print("SPEECH-TO-TEXT LIVE TRANSLATION")
+        print("="*60)
+        print("\nListening... Speak into your microphone.")
+        print("Press Ctrl+C to stop.\n")
+        
+        while self.is_running:
+            try:
+                with self.microphone as source:
+                    # Listen for audio (non-blocking for recognition)
+                    audio = self.recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                
+                # Queue audio for recognition in separate thread
+                # This allows us to immediately start listening again
+                self.audio_queue.put(audio)
                     
             except sr.WaitTimeoutError:
                 # No speech detected within timeout
@@ -118,6 +157,12 @@ class SpeechToText:
             except Exception as e:
                 print(f"✗ Error: {e}")
                 time.sleep(1)
+        
+        # Wait for recognition thread to finish processing remaining audio
+        print("Waiting for remaining audio to be processed...")
+        self.audio_queue.join()
+        if self.recognition_thread:
+            self.recognition_thread.join(timeout=5)
     
     def run(self):
         """Run the speech-to-text application."""
