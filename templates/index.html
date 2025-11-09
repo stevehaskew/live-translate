@@ -45,6 +45,17 @@
             font-size: 1.1rem;
         }
 
+        .header-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .header-content img {
+            max-height: 80px;
+        }
+
         /* Settings toggle button */
         .settings-toggle {
             position: absolute;
@@ -339,6 +350,22 @@
                 margin-bottom: 15px;
             }
 
+            .header-content {
+                flex-direction: row;
+                justify-content: center;
+                align-items: center;
+                gap: 12px;
+            }
+
+            .header-content img {
+                max-height: 50px;
+                margin-bottom: 0;
+            }
+
+            .header-text {
+                text-align: left;
+            }
+
             h1 {
                 font-size: 1.5rem;
                 margin-bottom: 5px;
@@ -415,11 +442,15 @@
 <body>
     <div class="container">
         <header>
-            {% if logo_file %}
-                <img src="{{ logo_file }}" alt="Logo" style="max-height: 80px; margin-bottom: 15px;">
-            {% endif %}
-            <h1>{{ page_title|safe }}</h1>
-            <p class="subtitle">Real-time speech translation powered by AI</p>
+            <div class="header-content">
+                {% if logo_file %}
+                    <img src="{{ logo_file }}" alt="Logo">
+                {% endif %}
+                <div class="header-text">
+                    <h1>{{ page_title|safe }}</h1>
+                    <p class="subtitle">Real-time speech translation powered by AI</p>
+                </div>
+            </div>
             <button id="settingsToggle" class="settings-toggle" title="Toggle Settings" aria-label="Toggle Settings">⚙️</button>
         </header>
 
