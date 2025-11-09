@@ -5,6 +5,7 @@ Receives text from speech-to-text app and broadcasts translations to web clients
 """
 
 import os
+import secrets
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 import boto3
@@ -148,7 +149,8 @@ def handle_new_text(data):
     # Validate API key if configured
     if API_KEY:
         provided_key = data.get('api_key', '')
-        if provided_key != API_KEY:
+        # Use constant-time comparison to prevent timing attacks
+        if not secrets.compare_digest(provided_key, API_KEY):
             logger.warning(f"Unauthorized new_text attempt from {request.sid}")
             emit('error', {'message': 'Unauthorized: Invalid API key'})
             return
