@@ -37,9 +37,11 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install core dependencies needed for tests (excluding PyAudio and SpeechRecognition)
+          # Install core dependencies needed for tests (excluding PyAudio)
+          # SpeechRecognition is included as it doesn't require PyAudio to install
           pip install Flask==3.1.2 Flask-SocketIO==5.5.1 python-socketio==5.14.3
           pip install boto3==1.40.69 python-dotenv==1.2.1 requests==2.32.5
+          pip install SpeechRecognition==3.14.3
       
       - name: Run unit tests
         run: |
