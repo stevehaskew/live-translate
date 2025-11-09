@@ -17,7 +17,7 @@ class TestThreadedAudioProcessing(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        self.server_url = 'http://localhost:5000'
+        self.server_url = 'http://localhost:5050'
     
     @patch('speech_to_text.sr.Microphone')
     @patch('speech_to_text.socketio.Client')

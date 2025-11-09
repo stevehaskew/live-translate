@@ -16,7 +16,7 @@ import queue
 class SpeechToText:
     """Handles speech recognition and broadcasts text to server."""
     
-    def __init__(self, server_url='http://localhost:5000'):
+    def __init__(self, server_url='http://localhost:5050'):
         """
         Initialize the speech recognition system.
         
