@@ -156,9 +156,26 @@ FLASK_HOST=0.0.0.0 FLASK_PORT=5050 python server.py
 
 **Speech-to-Text Application**:
 ```bash
+# List available audio input devices
+python speech_to_text.py -l
+
+# Connect to default server with default audio device
+python speech_to_text.py
+
 # Connect to a remote server
 python speech_to_text.py http://example.com:5050
+
+# Use a specific audio input device (by index from -l output)
+python speech_to_text.py -d 1
+
+# Use a specific device with a remote server
+python speech_to_text.py -d 1 http://example.com:5050
+
+# Set default audio device via environment variable
+LT_AUDIO_DEVICE=1 python speech_to_text.py
 ```
+
+You can also set the audio device permanently by adding `LT_AUDIO_DEVICE=<index>` to your `.env` file.
 
 ## Supported Languages
 
