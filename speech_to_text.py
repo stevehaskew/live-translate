@@ -9,6 +9,7 @@ import socketio
 import time
 import sys
 import os
+import argparse
 from datetime import datetime
 from dotenv import load_dotenv
 import threading
@@ -21,20 +22,22 @@ load_dotenv()
 class SpeechToText:
     """Handles speech recognition and broadcasts text to server."""
     
-    def __init__(self, server_url='http://localhost:5000', api_key=None):
+    def __init__(self, server_url='http://localhost:5000', api_key=None, device_index=None):
         """
         Initialize the speech recognition system.
         
         Args:
             server_url: URL of the Flask server for broadcasting text
             api_key: API key for authentication (defaults to API_KEY env variable)
+            device_index: Microphone device index (defaults to None for default device)
         """
         self.recognizer = sr.Recognizer()
-        self.microphone = sr.Microphone()
+        self.microphone = sr.Microphone(device_index=device_index)
         self.sio = socketio.Client()
         self.server_url = server_url
         self.api_key = api_key or os.environ.get('API_KEY')
         self.is_running = False
+        self.device_index = device_index
         
         # Adjust recognizer settings for better performance
         self.recognizer.energy_threshold = 4000
@@ -77,6 +80,10 @@ class SpeechToText:
     def calibrate_microphone(self):
         """Calibrate microphone for ambient noise."""
         print("\nCalibrating microphone for ambient noise...")
+        if self.device_index is not None:
+            print(f"Using audio device index: {self.device_index}")
+        else:
+            print("Using default audio device")
         print("Please remain quiet for 2 seconds...")
         
         with self.microphone as source:
@@ -205,20 +212,97 @@ class SpeechToText:
             print("✓ Speech recognition stopped.")
 
 
+def list_audio_devices():
+    """List all available audio input devices."""
+    print("="*60)
+    print("Available Audio Input Devices")
+    print("="*60)
+    try:
+        mic_list = sr.Microphone.list_microphone_names()
+        if not mic_list:
+            print("No audio devices found.")
+            return
+        
+        for index, name in enumerate(mic_list):
+            print(f"{index}: {name}")
+        
+        print("\n" + "="*60)
+        print(f"Total devices: {len(mic_list)}")
+        print("="*60)
+        print("\nTo use a specific device, use: -d <index>")
+        print("Or set LT_AUDIO_DEVICE=<index> in .env file")
+    except Exception as e:
+        print(f"✗ Error listing audio devices: {e}")
+        print("Make sure PyAudio is properly installed.")
+
+
 def main():
     """Main entry point."""
-    # Parse command line arguments
-    server_url = 'http://localhost:5050'
-    if len(sys.argv) > 1:
-        server_url = sys.argv[1]
+    parser = argparse.ArgumentParser(
+        description='Speech-to-Text Application for Live Translation',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                              # Use default device and server
+  %(prog)s http://example.com:5050      # Connect to remote server
+  %(prog)s -l                           # List available audio devices
+  %(prog)s -d 1                         # Use audio device with index 1
+  %(prog)s -d 1 http://example.com:5050 # Use device 1 with remote server
+
+Environment Variables:
+  LT_AUDIO_DEVICE  Set default audio device index
+  API_KEY          API key for server authentication
+        """
+    )
+    
+    parser.add_argument(
+        '-l', '--list-devices',
+        action='store_true',
+        help='List all available audio input devices and exit'
+    )
+    
+    parser.add_argument(
+        '-d', '--device',
+        type=int,
+        metavar='INDEX',
+        help='Select audio input device by index (use -l to see available devices)'
+    )
+    
+    parser.add_argument(
+        'server_url',
+        nargs='?',
+        default='http://localhost:5050',
+        help='Server URL (default: http://localhost:5050)'
+    )
+    
+    args = parser.parse_args()
+    
+    # If -l flag is provided, list devices and exit
+    if args.list_devices:
+        list_audio_devices()
+        return
+    
+    # Determine device index: command line > environment variable > None (default)
+    device_index = args.device
+    if device_index is None:
+        env_device = os.environ.get('LT_AUDIO_DEVICE')
+        if env_device:
+            try:
+                device_index = int(env_device)
+            except ValueError:
+                print(f"⚠ Warning: Invalid LT_AUDIO_DEVICE value '{env_device}'. Using default device.")
     
     print("="*60)
     print("Live Translation - Speech-to-Text")
     print("="*60)
-    print(f"\nServer URL: {server_url}")
+    print(f"\nServer URL: {args.server_url}")
+    if device_index is not None:
+        print(f"Audio Device Index: {device_index}")
+    else:
+        print("Audio Device: Default")
     
     # Create and run the application
-    app = SpeechToText(server_url=server_url)
+    app = SpeechToText(server_url=args.server_url, device_index=device_index)
     app.run()
 
 
