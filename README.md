@@ -20,7 +20,7 @@ The application consists of two main components:
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.9+ (tested on Python 3.9-3.12)
 - Microphone (for speech input)
 - AWS Account (optional, for translation features)
 - Internet connection (for speech recognition and translation APIs)
@@ -209,6 +209,14 @@ brew install portaudio
 # Then install PyAudio with specific flags
 pip install --global-option='build_ext' --global-option='-I/opt/homebrew/include' --global-option='-L/opt/homebrew/lib' pyaudio
 ```
+
+### aifc Deprecation Warning
+
+If you see a deprecation warning about the `aifc` module (Python 3.11+):
+- This is a known issue with older versions of the SpeechRecognition library
+- We've updated to SpeechRecognition 3.14.3 which has better Python 3.11+ compatibility
+- The warning should not affect functionality
+- Make sure you're using Python 3.9-3.12 for best compatibility
 
 ### Microphone Permission (macOS)
 
