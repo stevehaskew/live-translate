@@ -19,7 +19,7 @@ TEST_PHRASES = [
 ]
 
 
-def test_connection(server_url='http://localhost:5000'):
+def test_connection(server_url='http://localhost:5050'):
     """
     Test the connection to the server and send sample messages.
     
@@ -90,7 +90,7 @@ def test_connection(server_url='http://localhost:5000'):
 def main():
     """Main entry point."""
     # Parse command line arguments
-    server_url = 'http://localhost:5000'
+    server_url = 'http://localhost:5050'
     if len(sys.argv) > 1:
         server_url = sys.argv[1]
     
