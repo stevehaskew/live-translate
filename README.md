@@ -165,17 +165,27 @@ python speech_to_text.py
 # Connect to a remote server
 python speech_to_text.py http://example.com:5050
 
-# Use a specific audio input device (by index from -l output)
+# Use a specific audio input device by index (from -l output)
 python speech_to_text.py -d 1
+
+# Use a specific audio input device by name
+python speech_to_text.py -d "USB Microphone"
 
 # Use a specific device with a remote server
 python speech_to_text.py -d 1 http://example.com:5050
 
-# Set default audio device via environment variable
+# Set default audio device via environment variable (by index)
 LT_AUDIO_DEVICE=1 python speech_to_text.py
+
+# Set default audio device via environment variable (by name)
+LT_AUDIO_DEVICE="USB Microphone" python speech_to_text.py
 ```
 
-You can also set the audio device permanently by adding `LT_AUDIO_DEVICE=<index>` to your `.env` file.
+You can also set the audio device permanently in your `.env` file:
+- By index: `LT_AUDIO_DEVICE=1`
+- By name: `LT_AUDIO_DEVICE="USB Microphone"`
+
+Using device names is more stable when devices are added/removed from the system.
 
 ## Supported Languages
 

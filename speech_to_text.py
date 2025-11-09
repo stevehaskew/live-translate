@@ -212,25 +212,76 @@ class SpeechToText:
             print("✓ Speech recognition stopped.")
 
 
+def get_input_devices():
+    """
+    Get list of audio input devices.
+    
+    Returns:
+        List of tuples: (index, name, info_dict) for input devices only
+    """
+    try:
+        import pyaudio
+        audio = pyaudio.PyAudio()
+        try:
+            input_devices = []
+            for i in range(audio.get_device_count()):
+                device_info = audio.get_device_info_by_index(i)
+                # Only include devices with input channels
+                if device_info.get('maxInputChannels', 0) > 0:
+                    input_devices.append((i, device_info.get('name'), device_info))
+            return input_devices
+        finally:
+            audio.terminate()
+    except ImportError:
+        raise Exception("Could not find PyAudio; check installation")
+    except Exception as e:
+        raise Exception(f"Error accessing audio devices: {e}")
+
+
+def find_device_index_by_name(device_name):
+    """
+    Find device index by name.
+    
+    Args:
+        device_name: Name of the device to find
+        
+    Returns:
+        Device index if found, None otherwise
+    """
+    try:
+        input_devices = get_input_devices()
+        for index, name, info in input_devices:
+            if name == device_name:
+                return index
+        return None
+    except Exception:
+        return None
+
+
 def list_audio_devices():
     """List all available audio input devices."""
     print("="*60)
     print("Available Audio Input Devices")
     print("="*60)
     try:
-        mic_list = sr.Microphone.list_microphone_names()
-        if not mic_list:
-            print("No audio devices found.")
+        input_devices = get_input_devices()
+        
+        if not input_devices:
+            print("No audio input devices found.")
             return
         
-        for index, name in enumerate(mic_list):
-            print(f"{index}: {name}")
+        for index, name, info in input_devices:
+            channels = info.get('maxInputChannels', 0)
+            print(f"{index}: {name} ({channels} channels)")
         
         print("\n" + "="*60)
-        print(f"Total devices: {len(mic_list)}")
+        print(f"Total input devices: {len(input_devices)}")
         print("="*60)
-        print("\nTo use a specific device, use: -d <index>")
-        print("Or set LT_AUDIO_DEVICE=<index> in .env file")
+        print("\nTo use a specific device:")
+        print("  By index: -d <index>")
+        print("  By name:  -d \"<device_name>\"")
+        print("\nOr set permanently in .env:")
+        print("  LT_AUDIO_DEVICE=<index> or LT_AUDIO_DEVICE=\"<device_name>\"")
     except Exception as e:
         print(f"✗ Error listing audio devices: {e}")
         print("Make sure PyAudio is properly installed.")
@@ -247,10 +298,11 @@ Examples:
   %(prog)s http://example.com:5050      # Connect to remote server
   %(prog)s -l                           # List available audio devices
   %(prog)s -d 1                         # Use audio device with index 1
+  %(prog)s -d "USB Microphone"          # Use audio device by name
   %(prog)s -d 1 http://example.com:5050 # Use device 1 with remote server
 
 Environment Variables:
-  LT_AUDIO_DEVICE  Set default audio device index
+  LT_AUDIO_DEVICE  Set default audio device (index or name)
   API_KEY          API key for server authentication
         """
     )
@@ -263,9 +315,9 @@ Environment Variables:
     
     parser.add_argument(
         '-d', '--device',
-        type=int,
-        metavar='INDEX',
-        help='Select audio input device by index (use -l to see available devices)'
+        type=str,
+        metavar='DEVICE',
+        help='Select audio input device by index or name (use -l to see available devices)'
     )
     
     parser.add_argument(
@@ -283,21 +335,36 @@ Environment Variables:
         return
     
     # Determine device index: command line > environment variable > None (default)
-    device_index = args.device
-    if device_index is None:
-        env_device = os.environ.get('LT_AUDIO_DEVICE')
-        if env_device:
-            try:
-                device_index = int(env_device)
-            except ValueError:
-                print(f"⚠ Warning: Invalid LT_AUDIO_DEVICE value '{env_device}'. Using default device.")
+    device_spec = args.device
+    if device_spec is None:
+        device_spec = os.environ.get('LT_AUDIO_DEVICE')
+    
+    # Parse device specification (can be index or name)
+    device_index = None
+    device_name = None
+    
+    if device_spec:
+        # Try to parse as integer first
+        try:
+            device_index = int(device_spec)
+        except ValueError:
+            # It's a device name
+            device_name = device_spec
+            # Try to find the device by name
+            device_index = find_device_index_by_name(device_name)
+            if device_index is None:
+                print(f"⚠ Warning: Audio device '{device_name}' not found.")
+                print("Use -l to list available devices. Using default device.")
     
     print("="*60)
     print("Live Translation - Speech-to-Text")
     print("="*60)
     print(f"\nServer URL: {args.server_url}")
     if device_index is not None:
-        print(f"Audio Device Index: {device_index}")
+        if device_name:
+            print(f"Audio Device: {device_name} (index {device_index})")
+        else:
+            print(f"Audio Device Index: {device_index}")
     else:
         print("Audio Device: Default")
     
