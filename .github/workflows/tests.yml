@@ -1,5 +1,8 @@
 name: Tests
 
+# This workflow runs automated tests and linting on pull requests and pushes to main.
+# It ensures code quality and that all tests pass before merging.
+
 on:
   pull_request:
     branches:
@@ -72,10 +75,9 @@ jobs:
         run: |
           # Stop the build if there are Python syntax errors or undefined names
           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          # Exit-zero treats all errors as warnings. The default line length is 88 (black default)
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics \
-            --exclude=.git,__pycache__,venv,test_venv,.venv,build,dist,.eggs,*.egg-info
+          # Exit-zero treats all errors as warnings
+          flake8 . --count --exit-zero --max-complexity=10 --statistics
       
       - name: Check code formatting with black
         run: |
-          black --check --diff --color --exclude='/(\.git|\.venv|venv|test_venv|build|dist|\.eggs|.*\.egg-info)/' .
+          black --check --diff --color .
