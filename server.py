@@ -12,6 +12,7 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
 import logging
+import html
 
 # Load environment variables
 load_dotenv()
@@ -51,6 +52,13 @@ except (NoCredentialsError, Exception) as e:
 # Store connected clients with their preferred languages
 connected_clients = {}
 
+# Load UI customization settings
+ui_config = {
+    'logo_file': os.environ.get('LT_LOGO_FILE', ''),
+    'page_title': html.escape(os.environ.get('LT_PAGE_TITLE', '🌍 Live Translation')),
+    'contact_text': os.environ.get('LT_CONTACT_TEXT', '')
+}
+
 
 def translate_text(text, target_language, source_language='auto'):
     """
@@ -89,7 +97,13 @@ def translate_text(text, target_language, source_language='auto'):
 @app.route('/')
 def index():
     """Serve the main web interface."""
-    return render_template('index.html', aws_available=aws_available)
+    return render_template(
+        'index.html',
+        aws_available=aws_available,
+        logo_file=ui_config['logo_file'],
+        page_title=ui_config['page_title'],
+        contact_text=ui_config['contact_text']
+    )
 
 
 @app.route('/health')
