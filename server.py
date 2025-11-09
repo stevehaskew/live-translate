@@ -19,6 +19,12 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Load API key for authentication
+API_KEY = os.environ.get('API_KEY')
+if not API_KEY:
+    logger.warning("⚠ API_KEY not set in environment. Text input will not be secured.")
+    logger.warning("Set API_KEY in .env file for production use.")
+
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -137,8 +143,16 @@ def handle_new_text(data):
     Translates and broadcasts to all connected clients.
     
     Args:
-        data: Dictionary with 'text' and 'timestamp' keys
+        data: Dictionary with 'text', 'timestamp', and 'api_key' keys
     """
+    # Validate API key if configured
+    if API_KEY:
+        provided_key = data.get('api_key', '')
+        if provided_key != API_KEY:
+            logger.warning(f"Unauthorized new_text attempt from {request.sid}")
+            emit('error', {'message': 'Unauthorized: Invalid API key'})
+            return
+    
     original_text = data.get('text', '')
     timestamp = data.get('timestamp', '')
     
