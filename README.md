@@ -15,33 +15,88 @@ A real-time speech-to-text translation application that captures audio from a mi
 
 The application consists of two main components:
 
-1. **Speech-to-Text Application** (`speech_to_text.py`): Captures audio from the microphone and converts speech to text using Google Speech Recognition API
+1. **Speech-to-Text Client**: Captures audio from the microphone and converts speech to text using Google Speech Recognition API
+   - **Go Client** (`speech_to_text.go`): Native executable (recommended) - no Python dependencies required
+   - **Python Client** (`speech_to_text.py`): Legacy Python-based client
 2. **Web Server** (`server.py`): Flask-based server with WebSocket support that receives text, translates it using AWS Translate, and broadcasts to connected web clients
 
 ## Requirements
 
+### For the Web Server
 - Python 3.9+ (tested on Python 3.9-3.12)
+- Internet connection (for AWS Translate API)
+
+### For the Speech-to-Text Client
+
+#### Go Client (Recommended)
+- Go 1.19+ (for building from source)
+- PortAudio library
+  - **Linux**: `sudo apt-get install portaudio19-dev`
+  - **macOS**: `brew install portaudio`
+  - **Windows**: Download from [PortAudio website](http://www.portaudio.com/)
+- Google Cloud credentials for Speech API
 - Microphone (for speech input)
-- AWS Account (optional, for translation features)
-- Internet connection (for speech recognition and translation APIs)
+- Internet connection (for speech recognition API)
 
-### macOS Specific Requirements
-
-On macOS, you'll need to install PortAudio for PyAudio:
-
-```bash
-brew install portaudio
-```
+#### Python Client (Legacy)
+- Python 3.9+ (tested on Python 3.9-3.12)
+- PortAudio (same as Go client requirements)
+- Microphone (for speech input)
+- Internet connection (for speech recognition API)
 
 ## Installation
 
-1. **Clone the repository**:
+### 1. Clone the repository
 ```bash
 git clone https://github.com/stevehaskew/live-translate.git
 cd live-translate
 ```
 
-2. **Quick Start (Recommended for macOS/Linux)**:
+### 2. Install PortAudio (Required for Speech Client)
+```bash
+# Linux
+sudo apt-get install portaudio19-dev
+
+# macOS
+brew install portaudio
+
+# Windows - Download from http://www.portaudio.com/
+```
+
+### 3. Choose Your Speech Client
+
+#### Option A: Go Client (Recommended)
+
+**Pre-built binaries**: Download from the [Releases page](https://github.com/stevehaskew/live-translate/releases)
+
+**Build from source**:
+```bash
+# Install Go 1.19+ if not already installed
+# https://golang.org/dl/
+
+# Build the client
+make build
+
+# Or build manually
+go build -o speech_to_text_go speech_to_text.go
+
+# The executable will be created: ./speech_to_text_go
+```
+
+**Cross-platform builds**:
+```bash
+# Build for all platforms
+make build-all
+
+# Or build for specific platforms
+make build-linux    # Linux (amd64)
+make build-darwin   # macOS (amd64 and arm64)
+make build-windows  # Windows (amd64)
+```
+
+#### Option B: Python Client (Legacy)
+
+**Quick Start** (macOS/Linux):
 ```bash
 ./start.sh
 ```
@@ -49,10 +104,10 @@ This script will automatically:
 - Check Python version
 - Install PortAudio on macOS (if needed)
 - Create a virtual environment
-- Install dependencies
+- Install Python dependencies
 - Provide instructions to start the application
 
-3. **Manual Installation**:
+**Manual Installation**:
 
 Create a virtual environment (recommended):
 ```bash
@@ -60,12 +115,12 @@ python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-Install dependencies:
+Install Python dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. **Configure environment variables**:
+### 4. Configure environment variables
 
 Create a `.env` file from the example:
 ```bash
@@ -84,6 +139,16 @@ The API key secures communication between the speech-to-text client and the serv
 openssl rand -base64 32
 ```
 
+**Google Cloud Credentials (Required for Go Client)**:
+```
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
+```
+The Go client uses Google Cloud Speech-to-Text API. Follow these steps:
+1. Create a Google Cloud project
+2. Enable the Speech-to-Text API
+3. Create a service account and download the JSON key file
+4. Set the path to the JSON file in the environment variable
+
 **AWS Credentials (Optional, for translation)**:
 ```
 AWS_ACCESS_KEY_ID=your_access_key_here
@@ -99,6 +164,7 @@ aws configure
 **Note**: 
 - The application works without AWS credentials, but translation will be disabled (English-only mode).
 - Without an API_KEY set, the server will accept text from any client. Set API_KEY for production deployments.
+- The Python client uses the SpeechRecognition library which doesn't require Google Cloud credentials (it uses the free API).
 
 ## Usage
 
@@ -123,13 +189,19 @@ You can open multiple browser windows/tabs to simulate multiple users with diffe
 
 ### Step 3: Start Speech Recognition
 
-In another terminal window, start the speech-to-text application:
+In another terminal window, start the speech-to-text client:
 
+#### Using Go Client (Recommended)
+```bash
+./speech_to_text_go
+```
+
+#### Using Python Client (Legacy)
 ```bash
 python speech_to_text.py
 ```
 
-The application will:
+The client will:
 1. Connect to the web server
 2. Calibrate the microphone for ambient noise
 3. Start listening for speech
@@ -154,31 +226,39 @@ This will send sample phrases to the server, allowing you to see how the transla
 FLASK_HOST=0.0.0.0 FLASK_PORT=5050 python server.py
 ```
 
-**Speech-to-Text Application**:
+**Speech-to-Text Client** (same options for both Go and Python clients):
 ```bash
 # List available audio input devices
-python speech_to_text.py -l
+./speech_to_text_go -l                          # Go client
+python speech_to_text.py -l                     # Python client
 
 # Connect to default server with default audio device
-python speech_to_text.py
+./speech_to_text_go                             # Go client
+python speech_to_text.py                        # Python client
 
 # Connect to a remote server
-python speech_to_text.py http://example.com:5050
+./speech_to_text_go http://example.com:5050     # Go client
+python speech_to_text.py http://example.com:5050 # Python client
 
 # Use a specific audio input device by index (from -l output)
-python speech_to_text.py -d 1
+./speech_to_text_go -d 1                        # Go client
+python speech_to_text.py -d 1                   # Python client
 
 # Use a specific audio input device by name
-python speech_to_text.py -d "USB Microphone"
+./speech_to_text_go -d "USB Microphone"         # Go client
+python speech_to_text.py -d "USB Microphone"    # Python client
 
 # Use a specific device with a remote server
-python speech_to_text.py -d 1 http://example.com:5050
+./speech_to_text_go -d 1 http://example.com:5050     # Go client
+python speech_to_text.py -d 1 http://example.com:5050 # Python client
 
 # Set default audio device via environment variable (by index)
-LT_AUDIO_DEVICE=1 python speech_to_text.py
+LT_AUDIO_DEVICE=1 ./speech_to_text_go           # Go client
+LT_AUDIO_DEVICE=1 python speech_to_text.py      # Python client
 
 # Set default audio device via environment variable (by name)
-LT_AUDIO_DEVICE="USB Microphone" python speech_to_text.py
+LT_AUDIO_DEVICE="USB Microphone" ./speech_to_text_go      # Go client
+LT_AUDIO_DEVICE="USB Microphone" python speech_to_text.py # Python client
 ```
 
 You can also set the audio device permanently in your `.env` file:
@@ -357,13 +437,19 @@ The server will automatically detect and use gevent or eventlet if installed. No
 
 ```
 live-translate/
-├── speech_to_text.py      # Speech recognition application
+├── speech_to_text.go      # Go speech recognition client (recommended)
+├── speech_to_text.py      # Python speech recognition client (legacy)
 ├── server.py              # Flask web server
 ├── test_client.py         # Test script (no microphone needed)
-├── start.sh               # Quick start script (macOS/Linux)
+├── start.sh               # Quick start script for Python client (macOS/Linux)
+├── Makefile               # Build system for Go client
+├── go.mod                 # Go module dependencies
+├── go.sum                 # Go module checksums
 ├── templates/
 │   └── index.html        # Web interface
-├── requirements.txt       # Python dependencies
+├── requirements.txt       # Python dependencies for server
+├── client-requirements.txt # Python dependencies for Python client
+├── server-requirements.txt # Python dependencies for server only
 ├── .env.example          # Environment variables template
 ├── .gitignore           # Git ignore rules
 ├── LICENSE              # License file
