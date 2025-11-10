@@ -10,5 +10,5 @@ python-dotenv==1.2.1
 
 # Production WSGI server and async worker for Socket.IO (gevent)
 gunicorn==23.0.0
-gevent==24.2.1
+gevent==25.9.1
 gevent-websocket==0.10.1
