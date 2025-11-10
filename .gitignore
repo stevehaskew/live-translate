@@ -215,4 +215,5 @@ __marimo__/
 
 # Go binaries
 speech_to_text_go
-/speech_to_text_go
+speech_to_text_go-*
+*.exe
