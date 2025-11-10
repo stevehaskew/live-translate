@@ -3,26 +3,27 @@ module github.com/stevehaskew/live-translate
 go 1.24.9
 
 require (
+	cloud.google.com/go/speech v1.28.1
+	github.com/gordonklaus/portaudio v0.0.0-20250206071425-98a94950218b
+	github.com/joho/godotenv v1.5.1
+	github.com/zishang520/socket.io-client-go v1.1.0
+)
+
+require (
 	cloud.google.com/go v0.120.0 // indirect
 	cloud.google.com/go/auth v0.16.4 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.8.0 // indirect
 	cloud.google.com/go/longrunning v0.6.7 // indirect
-	cloud.google.com/go/speech v1.28.1 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/gofrs/uuid v4.0.0+incompatible // indirect
-	github.com/gomodule/redigo v1.8.4 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.15.0 // indirect
-	github.com/googollee/go-socket.io v1.7.0 // indirect
 	github.com/gookit/color v1.5.4 // indirect
-	github.com/gordonklaus/portaudio v0.0.0-20250206071425-98a94950218b // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
-	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/quic-go/qpack v0.5.1 // indirect
 	github.com/quic-go/quic-go v0.53.0 // indirect
@@ -32,7 +33,6 @@ require (
 	github.com/zishang520/engine.io-client-go v1.1.0 // indirect
 	github.com/zishang520/engine.io-go-parser v1.3.2 // indirect
 	github.com/zishang520/engine.io/v2 v2.5.0 // indirect
-	github.com/zishang520/socket.io-client-go v1.1.0 // indirect
 	github.com/zishang520/socket.io-go-parser/v2 v2.5.0 // indirect
 	github.com/zishang520/socket.io/v2 v2.5.0 // indirect
 	github.com/zishang520/webtransport-go v0.9.1 // indirect
