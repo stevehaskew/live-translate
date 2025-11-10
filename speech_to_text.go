@@ -14,11 +14,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming"
+	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming/types"
 	"github.com/gordonklaus/portaudio"
 	"github.com/joho/godotenv"
 	socketio_client "github.com/zishang520/socket.io-client-go/socket"
-	speech "cloud.google.com/go/speech/apiv1"
-	speechpb "cloud.google.com/go/speech/apiv1/speechpb"
 )
 
 const (
@@ -37,24 +39,26 @@ type AudioDevice struct {
 
 // SpeechToText handles speech recognition and broadcasting
 type SpeechToText struct {
-	serverURL    string
-	apiKey       string
-	deviceIndex  int
-	client       *socketio_client.Socket
-	stream       *portaudio.Stream
-	speechClient *speech.Client
-	isRunning    bool
-	ctx          context.Context
+	serverURL         string
+	apiKey            string
+	deviceIndex       int
+	client            *socketio_client.Socket
+	stream            *portaudio.Stream
+	transcribeClient  *transcribestreaming.Client
+	isRunning         bool
+	ctx               context.Context
+	awsRegion         string
 }
 
 // NewSpeechToText creates a new SpeechToText instance
-func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex int) (*SpeechToText, error) {
+func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex int, awsRegion string) (*SpeechToText, error) {
 	return &SpeechToText{
 		ctx:         ctx,
 		serverURL:   serverURL,
 		apiKey:      apiKey,
 		deviceIndex: deviceIndex,
 		isRunning:   false,
+		awsRegion:   awsRegion,
 	}, nil
 }
 
@@ -242,7 +246,7 @@ func int16ToBytes(samples []int16) []byte {
 	return buf.Bytes()
 }
 
-// listenAndTranscribe starts listening and transcribing
+// listenAndTranscribe starts listening and transcribing using AWS Transcribe Streaming
 func (s *SpeechToText) listenAndTranscribe() error {
 	s.isRunning = true
 	defer func() {
@@ -255,13 +259,15 @@ func (s *SpeechToText) listenAndTranscribe() error {
 	fmt.Println("\nListening... Speak into your microphone.")
 	fmt.Println("Press Ctrl+C to stop.\n")
 
-	// Create Google Speech client
-	speechClient, err := speech.NewClient(s.ctx)
+	// Load AWS config
+	cfg, err := config.LoadDefaultConfig(s.ctx, config.WithRegion(s.awsRegion))
 	if err != nil {
-		return fmt.Errorf("failed to create speech client: %v", err)
+		return fmt.Errorf("failed to load AWS config: %v", err)
 	}
-	defer speechClient.Close()
-	s.speechClient = speechClient
+
+	// Create AWS Transcribe Streaming client
+	transcribeClient := transcribestreaming.NewFromConfig(cfg)
+	s.transcribeClient = transcribeClient
 
 	// Get device info
 	var device *portaudio.DeviceInfo
@@ -301,93 +307,119 @@ func (s *SpeechToText) listenAndTranscribe() error {
 	}
 	defer stream.Stop()
 
-	// Main listening loop
-	audioBuffer := make([]int16, 0, sampleRate*int(phraseTimeLimit.Seconds()))
+	// Start AWS Transcribe streaming session
+	return s.startTranscribeStream(buffer)
+}
 
-	for s.isRunning {
-		select {
-		case <-s.ctx.Done():
-			return nil
-		default:
-			// Read audio data
-			if err := stream.Read(); err != nil {
-				log.Printf("Error reading from stream: %v", err)
-				continue
+// startTranscribeStream starts a streaming transcription session with AWS Transcribe
+
+// startTranscribeStream starts a streaming transcription session with AWS Transcribe
+func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
+	// Start transcription stream
+	stream, err := s.transcribeClient.StartStreamTranscription(s.ctx, &transcribestreaming.StartStreamTranscriptionInput{
+		LanguageCode:         types.LanguageCodeEnUs,
+		MediaSampleRateHertz: aws.Int32(sampleRate),
+		MediaEncoding:        types.MediaEncodingPcm,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to start transcription stream: %v", err)
+	}
+
+	// Get the event stream
+	eventStream := stream.GetStream()
+
+	// Channel to signal completion
+	done := make(chan error, 1)
+
+	// Start goroutine to handle transcription results
+	go func() {
+		defer close(done)
+		
+		for event := range eventStream.Events() {
+			switch e := event.(type) {
+			case *types.TranscriptResultStreamMemberTranscriptEvent:
+				// Process transcription results
+				for _, result := range e.Value.Transcript.Results {
+					if !result.IsPartial {
+						// Only process final results
+						if len(result.Alternatives) > 0 && result.Alternatives[0].Transcript != nil {
+							transcript := *result.Alternatives[0].Transcript
+							if strings.TrimSpace(transcript) != "" {
+								timestamp := time.Now().Format("15:04:05")
+								fmt.Printf("[%s] Recognized: %s\n", timestamp, transcript)
+
+								// Broadcast to server
+								if s.client != nil {
+									payload := map[string]interface{}{
+										"text":      transcript,
+										"timestamp": timestamp,
+									}
+									if s.apiKey != "" {
+										payload["api_key"] = s.apiKey
+									}
+									s.client.Emit("new_text", payload)
+								}
+							}
+						}
+					}
+				}
+			default:
+				// Handle other event types if needed
 			}
 
-			// Append to buffer
-			audioBuffer = append(audioBuffer, buffer...)
-
-			// Process when we have enough audio (about 2 seconds worth)
-			if len(audioBuffer) >= sampleRate*2 {
-				// Copy buffer for recognition
-				audioData := make([]int16, len(audioBuffer))
-				copy(audioData, audioBuffer)
-				audioBuffer = audioBuffer[:0] // Clear buffer
-
-				// Recognize speech
-				go s.recognizeAndBroadcast(audioData)
+			if !s.isRunning {
+				return
 			}
 		}
+		
+		// Check for errors
+		if err := eventStream.Err(); err != nil {
+			done <- err
+		}
+	}()
+
+	// Main audio capture loop
+	go func() {
+		for s.isRunning {
+			select {
+			case <-s.ctx.Done():
+				eventStream.Close()
+				return
+			default:
+				// Read audio data
+				if err := s.stream.Read(); err != nil {
+					log.Printf("Error reading from stream: %v", err)
+					continue
+				}
+
+				// Convert int16 buffer to bytes
+				audioBytes := int16ToBytes(buffer)
+
+				// Send audio to transcription service
+				err := eventStream.Send(s.ctx, &types.AudioStreamMemberAudioEvent{
+					Value: types.AudioEvent{
+						AudioChunk: audioBytes,
+					},
+				})
+				if err != nil {
+					log.Printf("Error sending audio: %v", err)
+					if !s.isRunning {
+						return
+					}
+				}
+			}
+		}
+		eventStream.Close()
+	}()
+
+	// Wait for completion or error
+	err = <-done
+	if err != nil {
+		return fmt.Errorf("transcription error: %v", err)
 	}
 
 	return nil
 }
-
-// recognizeAndBroadcast recognizes speech and broadcasts to server
-func (s *SpeechToText) recognizeAndBroadcast(audioData []int16) {
-	// Convert to bytes
-	audioBytes := int16ToBytes(audioData)
-
-	// Recognize speech
-	resp, err := s.speechClient.Recognize(s.ctx, &speechpb.RecognizeRequest{
-		Config: &speechpb.RecognitionConfig{
-			Encoding:        speechpb.RecognitionConfig_LINEAR16,
-			SampleRateHertz: sampleRate,
-			LanguageCode:    "en-US",
-		},
-		Audio: &speechpb.RecognitionAudio{
-			AudioSource: &speechpb.RecognitionAudio_Content{Content: audioBytes},
-		},
-	})
-
-	if err != nil {
-		// Most errors are just "no speech detected" which is normal
-		return
-	}
-
-	if len(resp.Results) == 0 {
-		return
-	}
-
-	// Get the best transcript
-	result := resp.Results[0]
-	if len(result.Alternatives) == 0 {
-		return
-	}
-
-	transcript := result.Alternatives[0].Transcript
-	if strings.TrimSpace(transcript) == "" {
-		return
-	}
-
-	timestamp := time.Now().Format("15:04:05")
-	fmt.Printf("[%s] Recognized: %s\n", timestamp, transcript)
-
-	// Broadcast to server
-	if s.client != nil {
-		payload := map[string]interface{}{
-			"text":      transcript,
-			"timestamp": timestamp,
-		}
-		if s.apiKey != "" {
-			payload["api_key"] = s.apiKey
-		}
-
-		s.client.Emit("new_text", payload)
-	}
-}
-
 // Run executes the main application logic
 func (s *SpeechToText) Run() error {
 	// Check API key configuration
@@ -453,9 +485,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -d \"USB Microphone\"          # Use audio device by name\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  %s -d 1 http://example.com:5050 # Use device 1 with remote server\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
-		fmt.Fprintf(os.Stderr, "  LT_AUDIO_DEVICE  Set default audio device (index or name)\n")
-		fmt.Fprintf(os.Stderr, "  API_KEY          API key for server authentication\n")
-		fmt.Fprintf(os.Stderr, "  GOOGLE_APPLICATION_CREDENTIALS  Path to Google Cloud credentials JSON\n")
+		fmt.Fprintf(os.Stderr, "  LT_AUDIO_DEVICE     Set default audio device (index or name)\n")
+		fmt.Fprintf(os.Stderr, "  API_KEY             API key for server authentication\n")
+		fmt.Fprintf(os.Stderr, "  AWS_DEFAULT_REGION  AWS region for Transcribe (default: us-east-1)\n")
+		fmt.Fprintf(os.Stderr, "  AWS_ACCESS_KEY_ID   AWS access key (or use AWS CLI/IAM role)\n")
+		fmt.Fprintf(os.Stderr, "  AWS_SECRET_ACCESS_KEY  AWS secret key (or use AWS CLI/IAM role)\n")
 	}
 
 	flag.Parse()
@@ -505,14 +539,19 @@ func main() {
 		}
 	}
 
-	// Get API key
+	// Get API key and AWS region
 	apiKey := os.Getenv("API_KEY")
+	awsRegion := os.Getenv("AWS_DEFAULT_REGION")
+	if awsRegion == "" {
+		awsRegion = "us-east-1" // Default region
+	}
 
 	// Print configuration
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println("Live Translation - Speech-to-Text")
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Printf("\nServer URL: %s\n", serverURL)
+	fmt.Printf("AWS Region: %s\n", awsRegion)
 	if deviceIndex >= 0 {
 		if deviceName != "" {
 			fmt.Printf("Audio Device: %s (index %d)\n", deviceName, deviceIndex)
@@ -538,7 +577,7 @@ func main() {
 	}()
 
 	// Create and run the application
-	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex)
+	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex, awsRegion)
 	if err != nil {
 		log.Fatalf("Error creating application: %v", err)
 	}

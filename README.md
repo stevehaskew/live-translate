@@ -15,9 +15,9 @@ A real-time speech-to-text translation application that captures audio from a mi
 
 The application consists of two main components:
 
-1. **Speech-to-Text Client**: Captures audio from the microphone and converts speech to text using Google Speech Recognition API
-   - **Go Client** (`speech_to_text.go`): Native executable (recommended) - no Python dependencies required
-   - **Python Client** (`speech_to_text.py`): Legacy Python-based client
+1. **Speech-to-Text Client**: Captures audio from the microphone and converts speech to text
+   - **Go Client** (`speech_to_text.go`): Native executable (recommended) - uses AWS Transcribe Streaming, no Python dependencies required
+   - **Python Client** (`speech_to_text.py`): Legacy Python-based client - uses Google Speech Recognition (free API)
 2. **Web Server** (`server.py`): Flask-based server with WebSocket support that receives text, translates it using AWS Translate, and broadcasts to connected web clients
 
 ## Requirements
@@ -34,7 +34,7 @@ The application consists of two main components:
   - **Linux**: `sudo apt-get install portaudio19-dev`
   - **macOS**: `brew install portaudio`
   - **Windows**: Download from [PortAudio website](http://www.portaudio.com/)
-- Google Cloud credentials for Speech API
+- AWS credentials for Transcribe Streaming API
 - Microphone (for speech input)
 - Internet connection (for speech recognition API)
 
@@ -139,32 +139,28 @@ The API key secures communication between the speech-to-text client and the serv
 openssl rand -base64 32
 ```
 
-**Google Cloud Credentials (Required for Go Client)**:
-```
-GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/service-account-key.json
-```
-The Go client uses Google Cloud Speech-to-Text API. Follow these steps:
-1. Create a Google Cloud project
-2. Enable the Speech-to-Text API
-3. Create a service account and download the JSON key file
-4. Set the path to the JSON file in the environment variable
-
-**AWS Credentials (Optional, for translation)**:
+**AWS Credentials (Required for Go Client and Server)**:
 ```
 AWS_ACCESS_KEY_ID=your_access_key_here
 AWS_SECRET_ACCESS_KEY=your_secret_key_here
 AWS_DEFAULT_REGION=us-east-1
 ```
 
-Alternatively, use AWS CLI to configure credentials:
-```bash
-aws configure
-```
+The Go client uses AWS Transcribe Streaming for speech recognition, and the server uses AWS Translate for translation. You can configure AWS credentials in several ways:
+
+1. **Environment variables** (as shown above)
+2. **AWS CLI configuration**:
+   ```bash
+   aws configure
+   ```
+3. **IAM roles** (recommended for EC2, ECS, Lambda deployments)
 
 **Note**: 
-- The application works without AWS credentials, but translation will be disabled (English-only mode).
-- Without an API_KEY set, the server will accept text from any client. Set API_KEY for production deployments.
-- The Python client uses the SpeechRecognition library which doesn't require Google Cloud credentials (it uses the free API).
+- The Go client requires AWS credentials for speech recognition (AWS Transcribe)
+- The server requires AWS credentials for translation (AWS Translate)
+- Without AWS credentials, the server will work in English-only mode (no translation)
+- Without an API_KEY set, the server will accept text from any client. Set API_KEY for production deployments
+- The Python client uses the SpeechRecognition library which doesn't require credentials (it uses Google's free API)
 
 ## Usage
 
@@ -289,8 +285,10 @@ The application supports translation to the following languages:
 
 ## How It Works
 
-1. **Audio Capture**: The speech-to-text app captures audio from the microphone using PyAudio
-2. **Speech Recognition**: Audio is processed by Google Speech Recognition API to convert speech to text
+1. **Audio Capture**: The speech-to-text client captures audio from the microphone using PortAudio
+2. **Speech Recognition**: 
+   - Go client: Audio is streamed to AWS Transcribe Streaming for real-time speech-to-text conversion
+   - Python client: Audio is processed by Google Speech Recognition API to convert speech to text
 3. **Broadcasting**: Recognized text is sent to the Flask server via WebSocket
 4. **Translation**: Server translates text to each connected client's preferred language using AWS Translate
 5. **Display**: Translated text is sent to web clients and displayed in real-time
