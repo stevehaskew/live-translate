@@ -186,16 +186,30 @@ class MessageHandler:
         logger.info(f"New text received: {text}")
 
         # Prepare translations for all clients
+        # Optimize by translating once per unique target language, then map
+        # the translated text back to the clients that requested that language.
         translations = []
-        for client_id, client_info in client_map.get_all_clients().items():
-            target_language = client_info.get("lang", "en")
 
-            if target_language == "en":
-                translated_text = text
+        # Collect unique languages requested by clients
+        clients = client_map.get_all_clients()
+        unique_langs = set(
+            client_info.get("lang", "en") for client_info in clients.values()
+        )
+
+        # Translate once per language (skip translation for English which uses original)
+        translations_by_lang = {}
+        for lang in unique_langs:
+            if lang == "en":
+                translations_by_lang[lang] = text
             else:
-                translated_text = self.translation_service.translate_text(
-                    text, target_language
+                translations_by_lang[lang] = self.translation_service.translate_text(
+                    text, lang
                 )
+
+        # Build per-client translation payloads using cached translations
+        for client_id, client_info in clients.items():
+            target_language = client_info.get("lang", "en")
+            translated_text = translations_by_lang.get(target_language, text)
 
             translations.append(
                 {
