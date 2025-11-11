@@ -21,11 +21,11 @@ RUN apt-get update \
 WORKDIR /app
 
 # Copy only server requirements first to leverage Docker layer caching
-COPY server-requirements.txt /app/
+COPY requirements.txt /app/
 
 # Upgrade pip and install Python dependencies required for the server
 RUN pip install --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir -r server-requirements.txt \
+    && pip install --no-cache-dir -r requirements.txt \
     # Remove build-time packages to reduce final image size
     && apt-get purge -y build-essential gcc libffi-dev libssl-dev python3-dev \
     && apt-get autoremove -y \

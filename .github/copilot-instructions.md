@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-Live-Translate is a real-time speech-to-text translation application built with Python. It captures audio from a microphone, converts speech to text using Google Speech Recognition API, and provides live translations to multiple web clients in their preferred languages via WebSockets.
+Live-Translate is a real-time speech-to-text translation application built with Python and Go. It captures audio from a microphone, converts speech to text using Google Speech Recognition API, and provides live translations to multiple web clients in their preferred languages via WebSockets.
 
 ### Key Components
 
-1. **Speech-to-Text Application** (`speech_to_text.py`): Captures audio and converts speech to text
+1. **Speech-to-Text Application** (`speech_to_text.go`): Captures audio and converts speech to text
 2. **Web Server** (`server.py`): Flask-based server with WebSocket support for real-time translation
 3. **Web Interface** (`templates/index.html`): Client-side UI for viewing translations
 
@@ -14,8 +14,7 @@ Live-Translate is a real-time speech-to-text translation application built with 
 
 - **Language**: Python 3.9-3.12
 - **Web Framework**: Flask 3.1.2
-- **WebSocket**: Flask-SocketIO 5.5.1, python-socketio 5.14.3
-- **Speech Recognition**: SpeechRecognition 3.14.3, PyAudio 0.2.14
+- **Speech Recognition**: AWS Transcribe
 - **Translation**: AWS Translate (via boto3)
 - **Configuration**: python-dotenv for environment variables
 - **Testing**: Python unittest framework
@@ -52,19 +51,11 @@ Live-Translate is a real-time speech-to-text translation application built with 
 2. Open web interface: `http://localhost:5050`
 3. Start speech recognition: `python speech_to_text.py`
 
-### Testing Without Microphone
-
-Use `python test_client.py` to send test phrases to the server.
-
 ## Testing Approach
 
 ### Test Files
 
-- `test_api_auth.py`: API key authentication tests
-- `test_audio_device_selection.py`: Audio device selection tests
-- `test_threading.py`: Threading and concurrency tests
 - `test_ui_customization.py`: UI customization tests
-- `test_client.py`: Manual testing script (not unit tests)
 
 ### Running Tests
 
@@ -155,7 +146,7 @@ python -m unittest test_api_auth
 
 1. Create test file with `test_` prefix
 2. Inherit from `unittest.TestCase`
-3. Mock external dependencies (Flask-SocketIO, boto3, PyAudio)
+3. Mock external dependencies (boto3)
 4. Test both success and failure scenarios
 
 ## Project-Specific Considerations
@@ -176,8 +167,6 @@ python -m unittest test_api_auth
 
 ### macOS Compatibility
 
-- PyAudio requires PortAudio: `brew install portaudio`
-- May need flac on Apple Silicon: `brew install flac`
 - Grant microphone permissions in System Preferences
 
 ### AWS Integration
@@ -211,10 +200,7 @@ live-translate/
 │   └── index.html              # Web interface
 ├── static/                     # Static assets (if any)
 ├── server.py                   # Flask server with WebSocket
-├── speech_to_text.py           # Speech recognition client
 ├── test_*.py                   # Unit tests
-├── test_client.py              # Manual testing tool
-├── start.sh                    # Setup script
 ├── requirements.txt            # Python dependencies
 ├── .env.example                # Environment template
 └── README.md                   # User documentation
@@ -248,9 +234,7 @@ live-translate/
 ### Adding New Dependencies
 
 1. Add to appropriate requirements file:
-   - `requirements.txt`: Core dependencies for all modes
-   - `server-requirements.txt`: Server-only dependencies
-   - `client-requirements.txt`: Client-only dependencies
+   - `requirements.txt`: Python dependencies for the server
 2. Keep versions pinned for reproducibility
 3. Test with minimum Python version (3.9)
 4. Consider optional dependencies for non-critical features

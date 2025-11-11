@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sync"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -20,9 +21,26 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming"
 	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming/types"
 	"github.com/gordonklaus/portaudio"
+	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
-	socketio_client "github.com/zishang520/socket.io-client-go/socket"
 )
+
+// Message types for WebSocket communication
+const (
+	MessageTypeConnect          = "connect"
+	MessageTypeConnectionStatus = "connection_status"
+	MessageTypeSetLanguage      = "set_language"
+	MessageTypeLanguageSet      = "language_set"
+	MessageTypeNewText          = "new_text"
+	MessageTypeTranslatedText   = "translated_text"
+	MessageTypeError            = "error"
+)
+
+// WSMessage represents a WebSocket message
+type WSMessage struct {
+	Type string                 `json:"type"`
+	Data map[string]interface{} `json:"data"`
+}
 
 const (
 	sampleRate      = 16000
@@ -43,7 +61,7 @@ type SpeechToText struct {
 	serverURL         string
 	apiKey            string
 	deviceIndex       int
-	client            *socketio_client.Socket
+	wsConn            *websocket.Conn
 	stream            *portaudio.Stream
 	transcribeClient  *transcribestreaming.Client
 	isRunning         bool
@@ -150,59 +168,84 @@ func findDeviceIndexByName(name string) (int, error) {
 func (s *SpeechToText) connectToServer() error {
 	fmt.Printf("Connecting to server at %s...\n", s.serverURL)
 
-	client, err := socketio_client.Connect(s.serverURL, nil)
+	// Parse the URL and convert http/https to ws/wss
+	u, err := url.Parse(s.serverURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse server URL: %v", err)
+	}
+
+	// Convert http(s) to ws(s)
+	if u.Scheme == "http" {
+		u.Scheme = "ws"
+	} else if u.Scheme == "https" {
+		u.Scheme = "wss"
+	} else if u.Scheme != "ws" && u.Scheme != "wss" {
+		u.Scheme = "ws"
+	}
+
+	// Add /ws path for WebSocket endpoint
+	u.Path = "/ws"
+	wsURL := u.String()
+
+	// Connect to WebSocket
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to server: %v", err)
 	}
 
-	s.client = client
+	s.wsConn = conn
+	fmt.Printf("✓ Connected to server at %s\n", wsURL)
 
-	// Setup event handlers
-	client.On("connect", func(args ...interface{}) {
-		fmt.Printf("✓ Connected to server at %s\n", s.serverURL)
-		s.connMu.Lock()
-		s.connectedOnce = true
-		s.connMu.Unlock()
-	})
-
-	client.On("disconnect", func(args ...interface{}) {
-		fmt.Println("✗ Disconnected from server")
-	})
-
-	client.On("connect_error", func(args ...interface{}) {
-		fmt.Printf("✗ Connection error: %v\n", args)
-	})
-
-	// Optional server-side connection acknowledgement (from server.py -> connection_status)
-	client.On("connection_status", func(args ...interface{}) {
-		fmt.Printf("Server connection_status: %v\n", args)
-	})
-
-	// Wait a bit for connection to establish
-	// Wait up to 5s for the connect event; otherwise return an error so caller
-	// can decide whether to continue. This avoids emitting before the socket
-	// is fully ready (which can cause silent drops).
-	timeout := time.After(5 * time.Second)
-	start := time.Now()
-	for {
-		s.connMu.RLock()
-		ready := s.connectedOnce
-		s.connMu.RUnlock()
-		if ready {
-			break
-		}
-		if time.Since(start) > 5*time.Second {
-			return fmt.Errorf("timed out waiting for socket to connect")
-		}
-		select {
-		case <-timeout:
-			return fmt.Errorf("timed out waiting for socket to connect")
-		default:
-			time.Sleep(100 * time.Millisecond)
-		}
-	}
+	// Start listening for messages from server
+	go s.readMessages()
 
 	return nil
+}
+
+// readMessages listens for incoming WebSocket messages
+func (s *SpeechToText) readMessages() {
+	defer func() {
+		if s.wsConn != nil {
+			s.wsConn.Close()
+		}
+	}()
+
+	for {
+		var msg WSMessage
+		err := s.wsConn.ReadJSON(&msg)
+		if err != nil {
+			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				log.Printf("WebSocket read error: %v", err)
+			}
+			return
+		}
+
+		// Handle incoming messages
+		switch msg.Type {
+		case MessageTypeConnectionStatus:
+			if awsAvailable, ok := msg.Data["aws_available"].(bool); ok {
+				fmt.Printf("Server connection status: aws_available=%v\n", awsAvailable)
+			}
+		case MessageTypeError:
+			if errMsg, ok := msg.Data["message"].(string); ok {
+				fmt.Printf("Server error: %s\n", errMsg)
+			}
+		}
+	}
+}
+
+// sendMessage sends a WebSocket message to the server
+func (s *SpeechToText) sendMessage(msgType string, data map[string]interface{}) error {
+	if s.wsConn == nil {
+		return fmt.Errorf("WebSocket connection not established")
+	}
+
+	msg := WSMessage{
+		Type: msgType,
+		Data: data,
+	}
+
+	return s.wsConn.WriteJSON(msg)
 }
 
 // calibrateMicrophone adjusts for ambient noise
@@ -385,34 +428,21 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 								fmt.Printf("[%s] Recognized: %s\n", timestamp, transcript)
 
 								// Broadcast to server
-								if s.client != nil {
-									// Ensure socket was connected at least once. If not, try a
-									// quick reconnect to avoid emitting before the socket is ready.
-									s.connMu.RLock()
-									connected := s.connectedOnce
-									s.connMu.RUnlock()
-									if !connected {
-										if s.verbose {
-											fmt.Println("[WARN] Socket not confirmed connected. Attempting reconnect before emit...")
-										}
-										if err := s.connectToServer(); err != nil {
-											fmt.Printf("[WARN] Reconnect failed: %v. Skipping emit.\n", err)
-											// skip emitting this message to avoid silent failures
-											continue
-										}
-									}
-									payload := map[string]interface{}{
+								if s.wsConn != nil {
+									data := map[string]interface{}{
 										"text":      transcript,
 										"timestamp": timestamp,
 									}
 									if s.apiKey != "" {
-										payload["api_key"] = s.apiKey
+										data["api_key"] = s.apiKey
 									}
-									// Emit event to server
-									if s.verbose {
-										fmt.Printf("[DEBUG] Emitting 'new_text' to server: %+v\n", payload)
+									// Send WebSocket message
+									if err := s.sendMessage(MessageTypeNewText, data); err != nil {
+										log.Printf("Failed to send message: %v", err)
 									}
-									s.client.Emit("new_text", payload)
+								} else {
+									fmt.Println("⚠ Not connected to server. Attempting to reconnect...")
+									s.connectToServer()
 								}
 							}
 						}
@@ -508,8 +538,8 @@ func (s *SpeechToText) Run() error {
 	}
 
 	// Cleanup
-	if s.client != nil {
-		s.client.Close()
+	if s.wsConn != nil {
+		s.wsConn.Close()
 	}
 	portaudio.Terminate()
 
