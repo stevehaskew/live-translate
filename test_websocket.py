@@ -55,7 +55,8 @@ def test_websocket():
             }
         }
         ws.send(json.dumps(new_text_msg))
-        print(f"Sent: {new_text_msg}")
+        # Log without sensitive data
+        print(f"Sent: {{'type': 'new_text', 'data': {{'text': 'Hello, this is a test message', 'timestamp': '12:34:56', 'api_key': '***'}}}}")
         
         # Receive translated text
         response = ws.recv()
