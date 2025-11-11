@@ -5,7 +5,8 @@
 aws_region = "us-east-1"
 
 # Domain name for the static website (e.g., translate.example.com)
-# This will be used for CloudFront distribution alias
+# IMPORTANT: This domain must already be hosted in Route53
+# Terraform will create ACM certificates and DNS records automatically
 domain_name = "translate.example.com"
 
 # API domain name (optional - defaults to "api.{domain_name}")

@@ -1,23 +1,42 @@
 # Terraform Infrastructure for Live Translation (AWS)
 
 This directory contains Terraform configuration for deploying Live Translation on AWS using:
-- API Gateway (WebSocket)
+- API Gateway (WebSocket) with custom domain
 - Lambda functions
 - DynamoDB for client connection storage
 - S3 + CloudFront for static website hosting
+- ACM certificates for HTTPS/WSS
+- Route53 DNS records
 
 ## Prerequisites
 
 1. **Terraform** >= 1.0 installed
 2. **AWS CLI** configured with appropriate credentials
-3. **AWS Account** with permissions to create:
+3. **Route53 Hosted Zone** - Your domain must already be hosted in Route53
+4. **AWS Account** with permissions to create:
    - API Gateway
    - Lambda functions
    - DynamoDB tables
    - S3 buckets
    - CloudFront distributions
+   - ACM certificates
+   - Route53 records
    - IAM roles and policies
    - CloudWatch Logs
+
+## DNS and Certificate Setup
+
+**Important**: Before running Terraform, ensure your domain is already hosted in Route53. Terraform will:
+1. Look up the existing Route53 hosted zone for your domain
+2. Create ACM certificates for both the static website and API Gateway
+3. Add DNS validation records to Route53
+4. Wait for certificate validation to complete
+5. Configure CloudFront and API Gateway to use the certificates
+6. Create A and AAAA records pointing to CloudFront and API Gateway
+
+**Certificate Locations**:
+- CloudFront certificate: `us-east-1` (required by CloudFront)
+- API Gateway certificate: Your configured region (e.g., `us-east-1`)
 
 ## Quick Start
 
@@ -43,11 +62,13 @@ Create a `terraform.tfvars` file:
 
 ```hcl
 aws_region   = "us-east-1"
-domain_name  = "translate.example.com"
+domain_name  = "translate.example.com"  # Must be hosted in Route53
 api_key      = "your-secure-api-key-here"
 environment  = "production"
 project_name = "live-translate"
 ```
+
+**Note**: The `domain_name` must already exist as a hosted zone in Route53. The API Gateway will automatically use `api.translate.example.com`.
 
 **Generate a secure API key:**
 ```bash
@@ -82,13 +103,14 @@ aws s3 sync ../static/ s3://$BUCKET_NAME/ \
   --exclude ".gitignore" \
   --exclude "*.example"
 
-# Create and upload config.json
+# Create and upload config.json with the custom domain
+WS_ENDPOINT=$(terraform output -raw websocket_api_endpoint)
 cat > config.json << EOF
 {
   "logoFile": "",
   "pageTitle": "🌍 Live Translation",
   "contactText": "your support team",
-  "websocketUrl": "wss://api.translate.example.com/production"
+  "websocketUrl": "$WS_ENDPOINT"
 }
 EOF
 
@@ -98,7 +120,24 @@ aws s3 cp config.json s3://$BUCKET_NAME/config.json
 # aws s3 cp /path/to/logo.png s3://$BUCKET_NAME/logo.png
 ```
 
-### 5. Invalidate CloudFront Cache (After Updates)
+**Note**: After Terraform completes, DNS records will be automatically created and the custom domains will be ready to use. Certificate validation typically takes 5-10 minutes.
+
+### 5. Verify Deployment
+
+Check that everything is working:
+
+```bash
+# Get the custom domain URLs
+terraform output cloudfront_custom_domain
+terraform output websocket_api_endpoint
+
+# Test the website
+curl -I https://$(terraform output -raw cloudfront_custom_domain)
+
+# The WebSocket endpoint will be: wss://api.YOUR-DOMAIN/production
+```
+
+### 6. Invalidate CloudFront Cache (After Updates)
 
 When you update files in S3, invalidate CloudFront cache:
 
@@ -148,6 +187,7 @@ aws cloudfront create-invalidation \
 
 ### API Gateway
 - **WebSocket API**: Handles real-time bidirectional communication
+- **Custom Domain**: Configured with ACM certificate
 - **Routes**: `$connect`, `$disconnect`, `$default`
 - **Stage**: Deployment stage (e.g., `production`)
 
@@ -173,11 +213,26 @@ aws cloudfront create-invalidation \
 
 ### CloudFront Distribution
 - **Purpose**: CDN for static website
+- **Custom Domain**: Configured with ACM certificate
 - **Features**:
-  - HTTPS redirect
+  - HTTPS redirect with custom domain
+  - SNI SSL/TLS 1.2+
   - Gzip compression
   - Caching (1 hour default)
   - Origin Access Control (OAC) for S3
+
+### ACM Certificates
+- **CloudFront Certificate**: Created in `us-east-1` (required by CloudFront)
+- **API Gateway Certificate**: Created in configured region
+- **Validation**: Automatic via DNS (Route53)
+- **Renewal**: Automatic by AWS
+
+### Route53 DNS Records
+- **A Record**: `domain_name` → CloudFront distribution
+- **AAAA Record**: `domain_name` → CloudFront distribution (IPv6)
+- **A Record**: `api.domain_name` → API Gateway custom domain
+- **AAAA Record**: `api.domain_name` → API Gateway custom domain (IPv6)
+- **Validation Records**: Automatic certificate validation
 
 ### IAM Role & Policies
 - **Lambda Execution Role**: Allows Lambda to:
@@ -219,46 +274,40 @@ The `config.json` file in S3 configures the static website:
 - `contactText`: Contact information for support
 - `websocketUrl`: Full WebSocket URL (get from Terraform output)
 
-## DNS Configuration
+## DNS and SSL Configuration
 
-After deployment, configure DNS records:
+**DNS is automatically configured by Terraform!** When you run `terraform apply`:
 
-1. **Static Website (CloudFront)**:
-   ```
-   translate.example.com → CNAME → d123456789abcd.cloudfront.net
-   ```
-   
-2. **API Gateway WebSocket**:
-   ```
-   api.translate.example.com → CNAME → xyz123.execute-api.us-east-1.amazonaws.com
-   ```
+1. **ACM Certificates** are automatically created:
+   - CloudFront certificate (in us-east-1)
+   - API Gateway certificate (in your configured region)
 
-Get CloudFront domain from:
+2. **DNS Validation** records are automatically added to Route53
+
+3. **Certificate Validation** waits for DNS propagation (usually 5-10 minutes)
+
+4. **A and AAAA Records** are created:
+   - `translate.example.com` → CloudFront distribution
+   - `api.translate.example.com` → API Gateway custom domain
+
+5. **Custom Domains** are configured with SSL/TLS:
+   - CloudFront uses SNI with TLS 1.2+
+   - API Gateway uses regional endpoint with TLS 1.2+
+
+**No manual DNS configuration required!** Just ensure your domain is already hosted in Route53 before running Terraform.
+
+### Accessing Your Deployment
+
+After Terraform completes (and certificate validation finishes):
+
+- **Static Website**: `https://translate.example.com`
+- **WebSocket API**: `wss://api.translate.example.com/production`
+
+Get the exact URLs from Terraform outputs:
 ```bash
-terraform output cloudfront_distribution_url
-```
-
-Get API Gateway domain from:
-```bash
+terraform output cloudfront_custom_domain
 terraform output websocket_api_endpoint
 ```
-
-## Custom Domain Setup (Optional)
-
-For production, use custom domains with SSL:
-
-1. **Request ACM Certificate** (in `us-east-1` for CloudFront):
-   ```bash
-   aws acm request-certificate \
-     --domain-name translate.example.com \
-     --domain-name api.translate.example.com \
-     --validation-method DNS \
-     --region us-east-1
-   ```
-
-2. **Update Terraform**: Uncomment ACM certificate section in `resources.tf`
-
-3. **Configure API Gateway Custom Domain**: Add custom domain mapping
 
 ## Updating the Deployment
 
