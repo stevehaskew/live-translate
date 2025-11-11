@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ page_title|safe }}</title>
-    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
     <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
 </head>
 <body>
@@ -157,12 +156,165 @@
 
         loadLanguagePreference();
 
-        // Initialize Socket.IO connection
-        try {
-            socket = io();
-        } catch (error) {
-            console.error('Failed to initialize Socket.IO:', error);
+        // WebSocket connection
+        let ws;
+        let reconnectInterval = 5000; // 5 seconds
+        let reconnectTimer = null;
+
+        // Message types
+        const MessageType = {
+            CONNECTION_STATUS: 'connection_status',
+            SET_LANGUAGE: 'set_language',
+            LANGUAGE_SET: 'language_set',
+            NEW_TEXT: 'new_text',
+            TRANSLATED_TEXT: 'translated_text',
+            REQUEST_TRANSLATION: 'request_translation',
+            TRANSLATION_RESULT: 'translation_result',
+            ERROR: 'error'
+        };
+
+        // Connect to WebSocket
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            try {
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = function() {
+                    console.log('Connected to server');
+                    statusIndicator.classList.add('connected');
+                    statusIndicator.classList.remove('disconnected');
+                    statusText.textContent = 'Connected';
+                    statusText.style.color = '#10b981';
+
+                    // Clear reconnect timer if set
+                    if (reconnectTimer) {
+                        clearTimeout(reconnectTimer);
+                        reconnectTimer = null;
+                    }
+
+                    // Send initial language preference
+                    const selectedLanguage = languageSelect.value;
+                    sendMessage(MessageType.SET_LANGUAGE, { language: selectedLanguage });
+                };
+
+                ws.onclose = function() {
+                    console.log('Disconnected from server');
+                    statusIndicator.classList.remove('connected');
+                    statusIndicator.classList.add('disconnected');
+                    statusText.textContent = 'Disconnected';
+                    statusText.style.color = '#ef4444';
+
+                    // Attempt to reconnect
+                    if (!reconnectTimer) {
+                        reconnectTimer = setTimeout(connectWebSocket, reconnectInterval);
+                    }
+                };
+
+                ws.onerror = function(error) {
+                    console.error('WebSocket error:', error);
+                };
+
+                ws.onmessage = function(event) {
+                    try {
+                        const message = JSON.parse(event.data);
+                        handleMessage(message);
+                    } catch (err) {
+                        console.error('Failed to parse message:', err);
+                    }
+                };
+            } catch (error) {
+                console.error('Failed to create WebSocket:', error);
+            }
         }
+
+        // Send a WebSocket message
+        function sendMessage(type, data) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const message = {
+                    type: type,
+                    data: data || {}
+                };
+                ws.send(JSON.stringify(message));
+            } else {
+                console.warn('WebSocket not connected, cannot send message');
+            }
+        }
+
+        // Handle incoming WebSocket messages
+        function handleMessage(message) {
+            switch (message.type) {
+                case MessageType.CONNECTION_STATUS:
+                    awsAvailable = message.data.aws_available;
+                    console.log('AWS Translate available:', awsAvailable);
+                    break;
+
+                case MessageType.LANGUAGE_SET:
+                    console.log('Language preference confirmed:', message.data.language);
+                    break;
+
+                case MessageType.TRANSLATED_TEXT:
+                    handleTranslatedText(message.data);
+                    break;
+
+                case MessageType.TRANSLATION_RESULT:
+                    console.log('Translation result:', message.data);
+                    break;
+
+                case MessageType.ERROR:
+                    console.error('Server error:', message.data.message);
+                    break;
+
+                default:
+                    console.log('Unknown message type:', message.type);
+            }
+        }
+
+        // Handle translated text message
+        function handleTranslatedText(data) {
+            console.log('Received translation:', data);
+            
+            // Remove empty state if this is the first message
+            if (messageCount === 0) {
+                messageContainer.innerHTML = '';
+            }
+            messageCount++;
+
+            // Create message element
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message';
+
+            const timestamp = document.createElement('div');
+            timestamp.className = 'message-timestamp';
+            timestamp.textContent = data.timestamp || new Date().toLocaleTimeString();
+
+            const text = document.createElement('div');
+            text.className = 'message-text';
+            text.textContent = data.text;
+
+            messageDiv.appendChild(timestamp);
+            messageDiv.appendChild(text);
+
+            // Show original text if translated
+            if (data.language !== 'en' && data.original !== data.text && awsAvailable) {
+                const original = document.createElement('div');
+                original.className = 'message-original';
+                original.textContent = `Original: ${data.original}`;
+                messageDiv.appendChild(original);
+            }
+
+            // Add to container (newest at top)
+            messageContainer.insertBefore(messageDiv, messageContainer.firstChild);
+
+            // Limit to 50 messages
+            while (messageContainer.children.length > 50) {
+                messageContainer.removeChild(messageContainer.lastChild);
+            }
+        }
+
+        // Initialize WebSocket connection
+        connectWebSocket();
 
         // Helper to reset the live feed to the empty state
         function setEmptyState() {
@@ -235,34 +387,6 @@
             });
         }
 
-        // Connection status handlers
-        if (socket) {
-            socket.on('connect', () => {
-                console.log('Connected to server');
-                statusIndicator.classList.add('connected');
-                statusIndicator.classList.remove('disconnected');
-                statusText.textContent = 'Connected';
-                statusText.style.color = '#10b981';
-
-                // Send initial language preference
-                const selectedLanguage = languageSelect.value;
-                socket.emit('set_language', { language: selectedLanguage });
-            });
-
-            socket.on('disconnect', () => {
-                console.log('Disconnected from server');
-                statusIndicator.classList.remove('connected');
-                statusIndicator.classList.add('disconnected');
-                statusText.textContent = 'Disconnected';
-                statusText.style.color = '#ef4444';
-            });
-
-            socket.on('connection_status', (data) => {
-                awsAvailable = data.aws_available;
-                console.log('AWS Translate available:', awsAvailable);
-            });
-        }
-
         // Language selection handler
         languageSelect.addEventListener('change', (event) => {
             const selectedLanguage = event.target.value;
@@ -272,72 +396,15 @@
             } catch (err) {
                 console.warn('Could not save language preference:', err);
             }
-            if (socket) {
-                socket.emit('set_language', { language: selectedLanguage });
-            }
+            sendMessage(MessageType.SET_LANGUAGE, { language: selectedLanguage });
         });
 
-        if (socket) {
-            socket.on('language_set', (data) => {
-                console.log('Language preference confirmed:', data.language);
-            });
-
-            // Translation message handler
-            socket.on('translated_text', (data) => {
-                console.log('Received translation:', data);
-                
-                // Remove empty state if this is the first message
-                if (messageCount === 0) {
-                    messageContainer.innerHTML = '';
-                }
-                messageCount++;
-
-                // Create message element
-                const messageDiv = document.createElement('div');
-                messageDiv.className = 'message';
-
-                const timestamp = document.createElement('div');
-                timestamp.className = 'message-timestamp';
-                timestamp.textContent = data.timestamp || new Date().toLocaleTimeString();
-
-                const text = document.createElement('div');
-                text.className = 'message-text';
-                text.textContent = data.text;
-
-                messageDiv.appendChild(timestamp);
-                messageDiv.appendChild(text);
-
-                // Show original text if translated
-                if (data.language !== 'en' && data.original !== data.text && awsAvailable) {
-                    const original = document.createElement('div');
-                    original.className = 'message-original';
-                    original.textContent = `Original: ${data.original}`;
-                    messageDiv.appendChild(original);
-                }
-
-                // Add to container (newest at top)
-                messageContainer.insertBefore(messageDiv, messageContainer.firstChild);
-
-                // Limit to 50 messages
-                while (messageContainer.children.length > 50) {
-                    messageContainer.removeChild(messageContainer.lastChild);
-                }
-            });
-
-            // Error handler
-            socket.on('error', (error) => {
-                console.error('Socket error:', error);
-            });
-        }
-
         // Handle page visibility to reconnect if needed
-        if (socket) {
-            document.addEventListener('visibilitychange', () => {
-                if (document.visibilityState === 'visible' && !socket.connected) {
-                    socket.connect();
-                }
-            });
-        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && (!ws || ws.readyState !== WebSocket.OPEN)) {
+                connectWebSocket();
+            }
+        });
 
         console.log('Live Translation client initialized');
     </script>

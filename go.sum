@@ -28,6 +28,8 @@ github.com/aws/aws-sdk-go-v2/service/sts v1.40.0 h1:ZGDJVmlpPFiNFCb/I42nYVKUanJA
 github.com/aws/aws-sdk-go-v2/service/sts v1.40.0/go.mod h1:E19xDjpzPZC7LS2knI9E6BaRFDK43Eul7vd6rSq2HWk=
 github.com/aws/aws-sdk-go-v2/service/transcribestreaming v1.32.8 h1:wAfsIPA/84brK0ddJyBkGSvYJPiW55aUewOMdLfqi1Q=
 github.com/aws/aws-sdk-go-v2/service/transcribestreaming v1.32.8/go.mod h1:4fJpZJV0kWZbIeoim59zCS6OiuUNjS4KtVL4oi839uw=
+github.com/aws/aws-sdk-go-v2/service/translate v1.33.10 h1:d30ITvIGo4TKK1jhOGgtUwoWg1WeZFX3wDB7bIZ13IY=
+github.com/aws/aws-sdk-go-v2/service/translate v1.33.10/go.mod h1:pNq3b2K2PXx5nL/0BKhVjee6E59lb56F4UAASm7bFTk=
 github.com/aws/smithy-go v1.23.2 h1:Crv0eatJUQhaManss33hS5r40CG3ZFH+21XSkqMrIUM=
 github.com/aws/smithy-go v1.23.2/go.mod h1:LEj2LM3rBRQJxPZTB4KuzZkaZYnZPnvgIhb4pu07mx0=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
