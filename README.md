@@ -8,8 +8,7 @@ A real-time speech-to-text translation application that captures audio from a mi
 - 🌍 **Multi-Language Translation**: Support for 15+ languages via AWS Translate
 - 🔄 **Real-Time Updates**: WebSocket-based live streaming to connected clients
 - 💻 **Web Interface**: Clean, modern UI for viewing translations
-- 🍎 **Mac Compatible**: Optimized for macOS with PyAudio support
-- ⚡ **Dual Mode**: Works with or without AWS Translate
+- 🍎 **Mac Compatible**: Optimized for macOS
 - ☁️ **Multiple Deployment Options**: Run locally with Flask or deploy to AWS with Lambda + API Gateway
 
 ## Deployment Options
@@ -33,42 +32,32 @@ This application supports two deployment modes:
 
 The application consists of two main components:
 
-1. **Speech-to-Text Client**: Captures audio from the microphone and converts speech to text
-   - **Go Client** (`speech_to_text.go`): Native executable (recommended) - uses AWS Transcribe Streaming and plain WebSockets
-   - **Python Client** (`speech_to_text.py`): Python-based client - uses Google Speech Recognition (free API) and plain WebSockets
+1. **Speech-to-Text Client** (`speech_to_text.go`): Captures audio from the microphone and converts speech to text
 2. **Web Server** (`server.py`): Flask-based server with native WebSocket support (using flask-sock) that receives text, translates it using AWS Translate, and broadcasts to connected web clients
 
 **Note**: For AWS cloud deployment, the Flask server is replaced with AWS Lambda functions and API Gateway. See the [Deployment Options](#deployment-options) section above.
 
 ### Communication Protocol
 
-The application uses **plain WebSockets** (not Socket.IO) for real-time communication between all components:
+The application uses websockets for real-time communication between all components:
 - Speech-to-text clients connect via WebSocket and send recognized text
 - Web browser clients connect via WebSocket to receive translations
-- All messages are JSON-formatted with a `type` and `data` structure
 
 ## Requirements
 
 ### For the Web Server
-- Python 3.9+ (tested on Python 3.9-3.12)
+- Python 3.11+ (tested on Python 3.11-3.12)
 - Internet connection (for AWS Translate API)
 
 ### For the Speech-to-Text Client
 
-#### Go Client (Recommended)
-- Go 1.19+ (for building from source)
+- Go 1.25+ (for building from source)
 - PortAudio library
   - **Linux**: `sudo apt-get install portaudio19-dev`
   - **macOS**: `brew install portaudio`
   - **Windows**: Download from [PortAudio website](http://www.portaudio.com/)
 - AWS credentials for Transcribe Streaming API
-- Microphone (for speech input)
-- Internet connection (for speech recognition API)
-
-#### Python Client (Legacy)
-- Python 3.9+ (tested on Python 3.9-3.12)
-- PortAudio (same as Go client requirements)
-- Microphone (for speech input)
+- Microphone/Audio Input Device (for speech input)
 - Internet connection (for speech recognition API)
 
 ## Installation
@@ -90,7 +79,7 @@ brew install portaudio
 # Windows - Download from http://www.portaudio.com/
 ```
 
-### 3. Choose Your Speech Client
+### 3. Install Your Speech Client
 
 #### Option A: Go Client (Recommended)
 
@@ -121,32 +110,6 @@ make build-darwin   # macOS (amd64 and arm64)
 make build-windows  # Windows (amd64)
 ```
 
-#### Option B: Python Client (Legacy)
-
-**Quick Start** (macOS/Linux):
-```bash
-./start.sh
-```
-This script will automatically:
-- Check Python version
-- Install PortAudio on macOS (if needed)
-- Create a virtual environment
-- Install Python dependencies
-- Provide instructions to start the application
-
-**Manual Installation**:
-
-Create a virtual environment (recommended):
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-Install Python dependencies:
-```bash
-pip install -r requirements.txt
-```
-
 ### 4. Configure environment variables
 
 Create a `.env` file from the example:
@@ -173,7 +136,7 @@ AWS_SECRET_ACCESS_KEY=your_secret_key_here
 AWS_DEFAULT_REGION=us-east-1
 ```
 
-The Go client uses AWS Transcribe Streaming for speech recognition, and the server uses AWS Translate for translation. You can configure AWS credentials in several ways:
+The client uses AWS Transcribe Streaming for speech recognition, and the server uses AWS Translate for translation. You can configure AWS credentials in several ways:
 
 1. **Environment variables** (as shown above)
 2. **AWS CLI configuration**:
@@ -183,7 +146,7 @@ The Go client uses AWS Transcribe Streaming for speech recognition, and the serv
 3. **IAM roles** (recommended for EC2, ECS, Lambda deployments)
 
 **Note**: 
-- The Go client requires AWS credentials for speech recognition (AWS Transcribe)
+- The client requires AWS credentials for speech recognition (AWS Transcribe)
 - The server requires AWS credentials for translation (AWS Translate)
 - Without AWS credentials, the server will work in English-only mode (no translation)
 - Without an API_KEY set, the server will accept text from any client. Set API_KEY for production deployments
@@ -214,14 +177,8 @@ You can open multiple browser windows/tabs to simulate multiple users with diffe
 
 In another terminal window, start the speech-to-text client:
 
-#### Using Go Client (Recommended)
 ```bash
 ./speech_to_text_go
-```
-
-#### Using Python Client (Legacy)
-```bash
-python speech_to_text.py
 ```
 
 The client will:
@@ -231,16 +188,6 @@ The client will:
 
 Now speak into your microphone, and the text will appear in real-time on all connected web clients, translated to their selected languages.
 
-### Testing Without a Microphone
-
-If you want to test the system without a microphone or speech input, use the test client:
-
-```bash
-python test_client.py
-```
-
-This will send sample phrases to the server, allowing you to see how the translation system works.
-
 ### Command Line Options
 
 **Web Server**:
@@ -249,39 +196,31 @@ This will send sample phrases to the server, allowing you to see how the transla
 FLASK_HOST=0.0.0.0 FLASK_PORT=5050 python server.py
 ```
 
-**Speech-to-Text Client** (same options for both Go and Python clients):
+**Speech-to-Text Client**:
 ```bash
 # List available audio input devices
-./speech_to_text_go -l                          # Go client
-python speech_to_text.py -l                     # Python client
+./speech_to_text_go -l
 
 # Connect to default server with default audio device
-./speech_to_text_go                             # Go client
-python speech_to_text.py                        # Python client
+./speech_to_text_go
 
 # Connect to a remote server
-./speech_to_text_go http://example.com:5050     # Go client
-python speech_to_text.py http://example.com:5050 # Python client
+./speech_to_text_go http://example.com:5050
 
 # Use a specific audio input device by index (from -l output)
-./speech_to_text_go -d 1                        # Go client
-python speech_to_text.py -d 1                   # Python client
+./speech_to_text_go -d 1
 
 # Use a specific audio input device by name
-./speech_to_text_go -d "USB Microphone"         # Go client
-python speech_to_text.py -d "USB Microphone"    # Python client
+./speech_to_text_go -d "USB Microphone"
 
 # Use a specific device with a remote server
-./speech_to_text_go -d 1 http://example.com:5050     # Go client
-python speech_to_text.py -d 1 http://example.com:5050 # Python client
+./speech_to_text_go -d 1 http://example.com:5050
 
 # Set default audio device via environment variable (by index)
-LT_AUDIO_DEVICE=1 ./speech_to_text_go           # Go client
-LT_AUDIO_DEVICE=1 python speech_to_text.py      # Python client
+LT_AUDIO_DEVICE=1 ./speech_to_text_go
 
 # Set default audio device via environment variable (by name)
-LT_AUDIO_DEVICE="USB Microphone" ./speech_to_text_go      # Go client
-LT_AUDIO_DEVICE="USB Microphone" python speech_to_text.py # Python client
+LT_AUDIO_DEVICE="USB Microphone" ./speech_to_text_go
 ```
 
 You can also set the audio device permanently in your `.env` file:
@@ -313,9 +252,7 @@ The application supports translation to the following languages:
 ## How It Works
 
 1. **Audio Capture**: The speech-to-text client captures audio from the microphone using PortAudio
-2. **Speech Recognition**: 
-   - Go client: Audio is streamed to AWS Transcribe Streaming for real-time speech-to-text conversion
-   - Python client: Audio is processed by Google Speech Recognition API to convert speech to text
+2. **Speech Recognition**: Audio is streamed to AWS Transcribe Streaming for real-time speech-to-text conversion
 3. **Broadcasting**: Recognized text is sent to the Flask server via WebSocket
 4. **Translation**: Server translates text to each connected client's preferred language using AWS Translate
 5. **Display**: Translated text is sent to web clients and displayed in real-time
@@ -344,33 +281,9 @@ The application supports translation to the following languages:
 
 ## Troubleshooting
 
-### PyAudio Installation Issues (macOS)
-
-If you encounter issues installing PyAudio on macOS:
-
-```bash
-# Install PortAudio first
-brew install portaudio
-
-# Then install PyAudio with specific flags
-pip install --global-option='build_ext' --global-option='-I/opt/homebrew/include' --global-option='-L/opt/homebrew/lib' pyaudio
-
-# You may need to install flac (on macOS silicon devices), which is a dependency of the SpeechRecognition library
-brew install flac
-
-```
-
-### aifc Deprecation Warning
-
-If you see a deprecation warning about the `aifc` module (Python 3.11+):
-- This is a known issue with older versions of the SpeechRecognition library
-- We've updated to SpeechRecognition 3.14.3 which has better Python 3.11+ compatibility
-- The warning should not affect functionality
-- Make sure you're using Python 3.9-3.12 for best compatibility
-
 ### Microphone Permission (macOS)
 
-Make sure to grant microphone access to Terminal or your Python IDE in System Preferences → Security & Privacy → Microphone.
+Make sure to grant microphone access to Terminal in System Preferences → Security & Privacy → Microphone.
 
 ### AWS Translate Not Working
 
@@ -416,7 +329,7 @@ Optional: restrict to a single region (example `us-east-1`) using a condition:
       "Resource": "*",
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "us-east-1"
+          "aws:RequestedRegion": "eu-west-2"
         }
       }
     }
@@ -437,24 +350,6 @@ If the speech-to-text app can't connect to the server:
 1. Ensure the Flask server is running
 2. Check firewall settings
 3. Verify the server URL is correct
-
-### SocketIO Async Mode Issues
-
-If you get an error about invalid async_mode when starting the server:
-
-The application uses Flask-SocketIO's default threading mode, which works out of the box. For better performance with more concurrent connections, you can optionally install an async library:
-
-**Recommended: gevent** (better performance and stability)
-```bash
-pip install gevent gevent-websocket
-```
-
-**Alternative: eventlet**
-```bash
-pip install eventlet
-```
-
-The server will automatically detect and use gevent or eventlet if installed. No configuration changes needed.
 
 ## AWS Cloud Deployment
 
@@ -533,8 +428,6 @@ live-translate/
 ├── Makefile               # Build system for Go client
 ├── go.mod                 # Go module dependencies
 ├── go.sum                 # Go module checksums
-├── templates/
-│   └── index.html        # Web interface (Flask template)
 ├── static/
 │   ├── index.html        # Static web interface (AWS S3)
 │   ├── main.css          # Stylesheet
@@ -569,10 +462,7 @@ For production use or handling many concurrent connections, install gevent for b
 pip install gevent gevent-websocket
 ```
 
-Flask-SocketIO will automatically detect and use gevent, providing:
-- Better scalability with concurrent WebSocket connections
-- Lower memory usage per connection
-- Improved performance for real-time updates
+The included Dockerfile shows deployment of the application with Gunicorn using gevent in a Docker environment.
 
 The application works fine with the default threading mode for testing and small deployments.
 
@@ -607,13 +497,3 @@ This project is licensed under the terms specified in the LICENSE file.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Future Enhancements
-
-- [ ] Support for additional speech recognition engines
-- [ ] Recording and playback of sessions
-- [ ] User authentication and session management
-- [ ] Mobile app support
-- [ ] Custom vocabulary and language models
-- [ ] Speaker diarization (multiple speakers)
-- [ ] Offline translation support
