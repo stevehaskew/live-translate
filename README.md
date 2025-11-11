@@ -2,6 +2,8 @@
 
 A real-time speech-to-text translation application that captures audio from a microphone, converts it to text, and provides live translations to web clients in their preferred languages.
 
+![](/docs/screenshot.png)
+
 ## Features
 
 - 🎤 **Speech-to-Text**: Real-time audio capture and speech recognition
