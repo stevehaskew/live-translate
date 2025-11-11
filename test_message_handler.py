@@ -21,9 +21,7 @@ class TestTranslationService(unittest.TestCase):
 
         self.assertTrue(service.aws_available)
         self.assertIsNotNone(service.translate_client)
-        mock_boto_client.assert_called_once_with(
-            "translate", region_name="us-west-2"
-        )
+        mock_boto_client.assert_called_once_with("translate", region_name="us-west-2")
 
     @patch("message_handler.boto3.client")
     def test_initialization_without_aws(self, mock_boto_client):
@@ -39,9 +37,7 @@ class TestTranslationService(unittest.TestCase):
     def test_translate_text_success(self, mock_boto_client):
         """Test successful text translation."""
         mock_translate = MagicMock()
-        mock_translate.translate_text.return_value = {
-            "TranslatedText": "Hola mundo"
-        }
+        mock_translate.translate_text.return_value = {"TranslatedText": "Hola mundo"}
         mock_boto_client.return_value = mock_translate
 
         service = TranslationService()
@@ -175,9 +171,7 @@ class TestMessageHandler(unittest.TestCase):
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(len(result["translations"]), 2)
-        self.assertEqual(
-            result["translations"][0]["translation"]["text"], "Hello"
-        )
+        self.assertEqual(result["translations"][0]["translation"]["text"], "Hello")
         self.assertEqual(result["translations"][1]["translation"]["text"], "Hola")
         self.mock_translation_service.translate_text.assert_called_once_with(
             "Hello", "es"
@@ -189,9 +183,7 @@ class TestMessageHandler(unittest.TestCase):
 
         response = self.handler.handle_request_translation("Hello world", "fr")
 
-        self.assertEqual(
-            response["type"], self.handler.MESSAGE_TYPE_TRANSLATION_RESULT
-        )
+        self.assertEqual(response["type"], self.handler.MESSAGE_TYPE_TRANSLATION_RESULT)
         self.assertEqual(response["data"]["original"], "Hello world")
         self.assertEqual(response["data"]["translated"], "Bonjour monde")
         self.assertEqual(response["data"]["language"], "fr")
@@ -205,9 +197,7 @@ class TestMessageHandler(unittest.TestCase):
 
         message = self.handler.create_connection_status_message()
 
-        self.assertEqual(
-            message["type"], self.handler.MESSAGE_TYPE_CONNECTION_STATUS
-        )
+        self.assertEqual(message["type"], self.handler.MESSAGE_TYPE_CONNECTION_STATUS)
         self.assertEqual(message["data"]["status"], "connected")
         self.assertTrue(message["data"]["aws_available"])
 
@@ -226,9 +216,7 @@ class TestMessageHandler(unittest.TestCase):
         self.assertEqual(self.handler.MESSAGE_TYPE_SET_LANGUAGE, "set_language")
         self.assertEqual(self.handler.MESSAGE_TYPE_LANGUAGE_SET, "language_set")
         self.assertEqual(self.handler.MESSAGE_TYPE_NEW_TEXT, "new_text")
-        self.assertEqual(
-            self.handler.MESSAGE_TYPE_TRANSLATED_TEXT, "translated_text"
-        )
+        self.assertEqual(self.handler.MESSAGE_TYPE_TRANSLATED_TEXT, "translated_text")
         self.assertEqual(
             self.handler.MESSAGE_TYPE_REQUEST_TRANSLATION, "request_translation"
         )

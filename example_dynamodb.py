@@ -24,15 +24,13 @@ def example_dynamodb_setup():
 
     # Initialize DynamoDB client map
     client_map = TranslationClientMapDynamoDB(
-        table_name=table_name,
-        region_name=region_name
+        table_name=table_name, region_name=region_name
     )
 
     # Initialize translation service and message handler
     translation_service = TranslationService(region_name=region_name)
     message_handler = MessageHandler(
-        translation_service,
-        api_key=os.environ.get("API_KEY")
+        translation_service, api_key=os.environ.get("API_KEY")
     )
 
     return client_map, message_handler
@@ -85,14 +83,12 @@ def example_create_table():
             KeySchema=[
                 {"AttributeName": "client_id", "KeyType": "HASH"}  # Partition key
             ],
-            AttributeDefinitions=[
-                {"AttributeName": "client_id", "AttributeType": "S"}
-            ],
+            AttributeDefinitions=[{"AttributeName": "client_id", "AttributeType": "S"}],
             BillingMode="PAY_PER_REQUEST",  # On-demand billing
             Tags=[
                 {"Key": "Application", "Value": "LiveTranslate"},
-                {"Key": "Environment", "Value": "Production"}
-            ]
+                {"Key": "Environment", "Value": "Production"},
+            ],
         )
         print(f"Table created: {response['TableDescription']['TableName']}")
         print(f"Status: {response['TableDescription']['TableStatus']}")

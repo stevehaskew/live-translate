@@ -194,9 +194,7 @@ class TestTranslationClientMapDynamoDB(unittest.TestCase):
         self.assertIsNone(client["ws"])  # WebSocket not stored in DynamoDB
 
         # Verify DynamoDB was queried
-        self.mock_table.get_item.assert_called_once_with(
-            Key={"client_id": "client1"}
-        )
+        self.mock_table.get_item.assert_called_once_with(Key={"client_id": "client1"})
 
     def test_update_language(self):
         """Test updating a client's language in DynamoDB."""
@@ -210,9 +208,7 @@ class TestTranslationClientMapDynamoDB(unittest.TestCase):
         self.mock_table.update_item.assert_called_once()
         call_args = self.mock_table.update_item.call_args
         self.assertEqual(call_args[1]["Key"], {"client_id": "client1"})
-        self.assertEqual(
-            call_args[1]["ExpressionAttributeValues"], {":lang": "fr"}
-        )
+        self.assertEqual(call_args[1]["ExpressionAttributeValues"], {":lang": "fr"})
 
         # Verify local cache was updated
         client = self.client_map.get_client("client1")
