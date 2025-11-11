@@ -7,8 +7,7 @@ Receives text from speech-to-text app and broadcasts translations to web clients
 import os
 import json
 import logging
-import html
-from flask import Flask, render_template
+from flask import Flask, send_from_directory, jsonify
 from flask_sock import Sock
 from dotenv import load_dotenv
 
@@ -50,11 +49,12 @@ message_handler = MessageHandler(translation_service, API_KEY)
 # Initialize client map
 client_map = TranslationClientMap()
 
-# Load UI customization settings
+# Load UI customization settings (for config.json endpoint)
 ui_config = {
-    "logo_file": os.environ.get("LT_LOGO_FILE", ""),
-    "page_title": html.escape(os.environ.get("LT_PAGE_TITLE", "🌍 Live Translation")),
-    "contact_text": os.environ.get("LT_CONTACT_TEXT", ""),
+    "logoFile": os.environ.get("LT_LOGO_FILE", ""),
+    "pageTitle": os.environ.get("LT_PAGE_TITLE", "🌍 Live Translation"),
+    "contactText": os.environ.get("LT_CONTACT_TEXT", "your support team"),
+    "websocketUrl": ""  # Auto-detected by the client
 }
 
 # Message type constants (for backward compatibility)
@@ -97,13 +97,19 @@ def broadcast_message(msg_type, data, exclude_client=None):
 @app.route("/")
 def index():
     """Serve the main web interface."""
-    return render_template(
-        "index.html",
-        aws_available=aws_available,
-        logo_file=ui_config["logo_file"],
-        page_title=ui_config["page_title"],
-        contact_text=ui_config["contact_text"],
-    )
+    return send_from_directory("static", "index.html")
+
+
+@app.route("/<path:filename>")
+def serve_static(filename):
+    """Serve static files (CSS, images, etc.)."""
+    return send_from_directory("static", filename)
+
+
+@app.route("/config.json")
+def config():
+    """Serve configuration from environment variables."""
+    return jsonify(ui_config)
 
 
 @app.route("/health")
