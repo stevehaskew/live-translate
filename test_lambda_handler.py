@@ -10,7 +10,7 @@ import os
 import sys
 
 # Mock boto3 before importing lambda_handler
-sys.modules['boto3'] = MagicMock()
+sys.modules["boto3"] = MagicMock()
 
 
 class TestLambdaHandler(unittest.TestCase):
@@ -25,10 +25,12 @@ class TestLambdaHandler(unittest.TestCase):
 
         # Import lambda_handler after setting env vars
         import lambda_handler
+
         self.lambda_handler = lambda_handler
 
         # Create a fresh client map for each test
         from client_map import TranslationClientMap
+
         self.lambda_handler.client_map = TranslationClientMap()
 
     def test_handle_connect(self):
@@ -36,7 +38,7 @@ class TestLambdaHandler(unittest.TestCase):
         event = {
             "requestContext": {
                 "connectionId": "test-connection-123",
-                "routeKey": "$connect"
+                "routeKey": "$connect",
             }
         }
         context = {}
@@ -59,7 +61,7 @@ class TestLambdaHandler(unittest.TestCase):
         event = {
             "requestContext": {
                 "connectionId": "test-connection-123",
-                "routeKey": "$disconnect"
+                "routeKey": "$disconnect",
             }
         }
         context = {}
@@ -73,7 +75,7 @@ class TestLambdaHandler(unittest.TestCase):
         client = self.lambda_handler.client_map.get_client("test-connection-123")
         self.assertIsNone(client)
 
-    @patch('lambda_handler.get_apigw_management_client')
+    @patch("lambda_handler.get_apigw_management_client")
     def test_handle_message_set_language(self, mock_get_client):
         """Test handling set_language message."""
         # Add client first
@@ -87,12 +89,9 @@ class TestLambdaHandler(unittest.TestCase):
                 "connectionId": "test-connection-123",
                 "routeKey": "$default",
                 "domainName": "test.execute-api.us-east-1.amazonaws.com",
-                "stage": "production"
+                "stage": "production",
             },
-            "body": json.dumps({
-                "type": "set_language",
-                "data": {"language": "es"}
-            })
+            "body": json.dumps({"type": "set_language", "data": {"language": "es"}}),
         }
         context = {}
 
@@ -107,7 +106,7 @@ class TestLambdaHandler(unittest.TestCase):
         # Verify messages were sent
         self.assertTrue(mock_apigw.post_to_connection.called)
 
-    @patch('lambda_handler.get_apigw_management_client')
+    @patch("lambda_handler.get_apigw_management_client")
     def test_handle_message_new_text_unauthorized(self, mock_get_client):
         """Test handling new_text message with invalid API key."""
         mock_apigw = MagicMock()
@@ -118,16 +117,18 @@ class TestLambdaHandler(unittest.TestCase):
                 "connectionId": "test-connection-123",
                 "routeKey": "$default",
                 "domainName": "test.execute-api.us-east-1.amazonaws.com",
-                "stage": "production"
+                "stage": "production",
             },
-            "body": json.dumps({
-                "type": "new_text",
-                "data": {
-                    "text": "Hello world",
-                    "timestamp": "12:00:00",
-                    "api_key": "wrong-key"
+            "body": json.dumps(
+                {
+                    "type": "new_text",
+                    "data": {
+                        "text": "Hello world",
+                        "timestamp": "12:00:00",
+                        "api_key": "wrong-key",
+                    },
                 }
-            })
+            ),
         }
         context = {}
 
@@ -136,7 +137,7 @@ class TestLambdaHandler(unittest.TestCase):
         self.assertEqual(response["statusCode"], 401)
         self.assertEqual(response["body"], "Unauthorized")
 
-    @patch('lambda_handler.get_apigw_management_client')
+    @patch("lambda_handler.get_apigw_management_client")
     def test_handle_message_new_text_authorized(self, mock_get_client):
         """Test handling new_text message with valid API key."""
         # Add a client
@@ -150,16 +151,18 @@ class TestLambdaHandler(unittest.TestCase):
                 "connectionId": "test-connection-456",
                 "routeKey": "$default",
                 "domainName": "test.execute-api.us-east-1.amazonaws.com",
-                "stage": "production"
+                "stage": "production",
             },
-            "body": json.dumps({
-                "type": "new_text",
-                "data": {
-                    "text": "Hello world",
-                    "timestamp": "12:00:00",
-                    "api_key": "test-api-key-123"
+            "body": json.dumps(
+                {
+                    "type": "new_text",
+                    "data": {
+                        "text": "Hello world",
+                        "timestamp": "12:00:00",
+                        "api_key": "test-api-key-123",
+                    },
                 }
-            })
+            ),
         }
         context = {}
 
@@ -181,7 +184,7 @@ class TestLambdaHandler(unittest.TestCase):
         event = {
             "requestContext": {
                 "connectionId": "test-connection-123",
-                "routeKey": "$connect"
+                "routeKey": "$connect",
             }
         }
         context = {}
@@ -198,7 +201,7 @@ class TestLambdaHandler(unittest.TestCase):
         event = {
             "requestContext": {
                 "connectionId": "test-connection-123",
-                "routeKey": "$disconnect"
+                "routeKey": "$disconnect",
             }
         }
         context = {}
@@ -212,7 +215,7 @@ class TestLambdaHandler(unittest.TestCase):
         event = {
             "requestContext": {
                 "connectionId": "test-connection-123",
-                "routeKey": "$unknown"
+                "routeKey": "$unknown",
             }
         }
         context = {}
@@ -222,7 +225,7 @@ class TestLambdaHandler(unittest.TestCase):
         self.assertEqual(response["statusCode"], 400)
         self.assertIn("Unknown route", response["body"])
 
-    @patch('lambda_handler.get_apigw_management_client')
+    @patch("lambda_handler.get_apigw_management_client")
     def test_send_message_to_connection_success(self, mock_get_client):
         """Test successfully sending message to a connection."""
         mock_apigw = MagicMock()
@@ -236,7 +239,7 @@ class TestLambdaHandler(unittest.TestCase):
         self.assertTrue(result)
         mock_apigw.post_to_connection.assert_called_once()
 
-    @patch('lambda_handler.get_apigw_management_client')
+    @patch("lambda_handler.get_apigw_management_client")
     def test_send_message_to_connection_gone(self, mock_get_client):
         """Test sending message to gone connection (410 error)."""
         from botocore.exceptions import ClientError
@@ -263,11 +266,11 @@ class TestLambdaHandler(unittest.TestCase):
 
     def test_get_apigw_management_client(self):
         """Test getting API Gateway management client."""
-        with patch('lambda_handler.boto3.client') as mock_boto_client:
+        with patch("lambda_handler.boto3.client") as mock_boto_client:
             event = {
                 "requestContext": {
                     "domainName": "test.execute-api.us-east-1.amazonaws.com",
-                    "stage": "production"
+                    "stage": "production",
                 }
             }
 
