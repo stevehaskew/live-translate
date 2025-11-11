@@ -2,7 +2,7 @@ name: Build & attach Go release assets
 
 on:
   release:
-    types: [created, published]
+    types: [created]
 
 permissions:
   contents: write
