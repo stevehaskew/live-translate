@@ -143,7 +143,7 @@ def websocket_handler(ws):
 
                 if msg_type == MESSAGE_TYPE_SET_LANGUAGE:
                     # Handle language preference from client
-                    language = msg_data.get("language", "en")
+                    language = msg_data.get("lang", "en")
                     response = message_handler.handle_set_language(
                         client_id, language, client_map
                     )

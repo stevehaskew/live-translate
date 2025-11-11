@@ -22,7 +22,7 @@ class TestTranslationClientMap(unittest.TestCase):
 
         client = self.client_map.get_client("client1")
         self.assertIsNotNone(client)
-        self.assertEqual(client["language"], "es")
+        self.assertEqual(client["lang"], "es")
         self.assertEqual(client["ws"], ws_mock)
 
     def test_add_client_default_language(self):
@@ -32,7 +32,7 @@ class TestTranslationClientMap(unittest.TestCase):
 
         client = self.client_map.get_client("client2")
         self.assertIsNotNone(client)
-        self.assertEqual(client["language"], "en")
+        self.assertEqual(client["lang"], "en")
 
     def test_delete_client(self):
         """Test deleting a client from the map."""
@@ -56,7 +56,7 @@ class TestTranslationClientMap(unittest.TestCase):
 
         client = self.client_map.get_client("client1")
         self.assertIsNotNone(client)
-        self.assertEqual(client["language"], "de")
+        self.assertEqual(client["lang"], "de")
         self.assertEqual(client["ws"], ws_mock)
 
     def test_get_nonexistent_client(self):
@@ -75,8 +75,8 @@ class TestTranslationClientMap(unittest.TestCase):
         self.assertEqual(len(all_clients), 2)
         self.assertIn("client1", all_clients)
         self.assertIn("client2", all_clients)
-        self.assertEqual(all_clients["client1"]["language"], "es")
-        self.assertEqual(all_clients["client2"]["language"], "fr")
+        self.assertEqual(all_clients["client1"]["lang"], "es")
+        self.assertEqual(all_clients["client2"]["lang"], "fr")
 
     def test_update_language(self):
         """Test updating a client's language preference."""
@@ -87,7 +87,7 @@ class TestTranslationClientMap(unittest.TestCase):
         self.assertTrue(result)
 
         client = self.client_map.get_client("client1")
-        self.assertEqual(client["language"], "fr")
+        self.assertEqual(client["lang"], "fr")
 
     def test_update_language_nonexistent_client(self):
         """Test updating language for a nonexistent client."""
@@ -145,13 +145,13 @@ class TestTranslationClientMapDynamoDB(unittest.TestCase):
 
         # Verify DynamoDB put_item was called
         self.mock_table.put_item.assert_called_once_with(
-            Item={"client_id": "client1", "language": "es"}
+            Item={"client_id": "client1", "lang": "es"}
         )
 
         # Verify local cache was updated
         client = self.client_map.get_client("client1")
         self.assertIsNotNone(client)
-        self.assertEqual(client["language"], "es")
+        self.assertEqual(client["lang"], "es")
         self.assertEqual(client["ws"], ws_mock)
 
     def test_delete_client(self):
@@ -176,7 +176,7 @@ class TestTranslationClientMapDynamoDB(unittest.TestCase):
 
         client = self.client_map.get_client("client1")
         self.assertIsNotNone(client)
-        self.assertEqual(client["language"], "es")
+        self.assertEqual(client["lang"], "es")
         self.assertEqual(client["ws"], ws_mock)
 
         # DynamoDB get_item should not have been called
@@ -185,12 +185,12 @@ class TestTranslationClientMapDynamoDB(unittest.TestCase):
     def test_get_client_from_dynamodb(self):
         """Test getting a client from DynamoDB when not in local cache."""
         self.mock_table.get_item.return_value = {
-            "Item": {"client_id": "client1", "language": "es"}
+            "Item": {"client_id": "client1", "lang": "es"}
         }
 
         client = self.client_map.get_client("client1")
         self.assertIsNotNone(client)
-        self.assertEqual(client["language"], "es")
+        self.assertEqual(client["lang"], "es")
         self.assertIsNone(client["ws"])  # WebSocket not stored in DynamoDB
 
         # Verify DynamoDB was queried
@@ -212,7 +212,7 @@ class TestTranslationClientMapDynamoDB(unittest.TestCase):
 
         # Verify local cache was updated
         client = self.client_map.get_client("client1")
-        self.assertEqual(client["language"], "fr")
+        self.assertEqual(client["lang"], "fr")
 
     def test_count(self):
         """Test counting clients (local cache only)."""

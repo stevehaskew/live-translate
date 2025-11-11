@@ -147,7 +147,7 @@ class MessageHandler:
             logger.info(f"Client {client_id} language set to: {language}")
             return {
                 "type": self.MESSAGE_TYPE_LANGUAGE_SET,
-                "data": {"language": language},
+                "data": {"lang": language},
             }
         else:
             return {
@@ -188,7 +188,7 @@ class MessageHandler:
         # Prepare translations for all clients
         translations = []
         for client_id, client_info in client_map.get_all_clients().items():
-            target_language = client_info.get("language", "en")
+            target_language = client_info.get("lang", "en")
 
             if target_language == "en":
                 translated_text = text
@@ -204,7 +204,7 @@ class MessageHandler:
                         "text": translated_text,
                         "original": text,
                         "timestamp": timestamp,
-                        "language": target_language,
+                        "lang": target_language,
                     },
                 }
             )
@@ -235,7 +235,7 @@ class MessageHandler:
             "data": {
                 "original": text,
                 "translated": translated_text,
-                "language": target_language,
+                "lang": target_language,
             },
         }
 

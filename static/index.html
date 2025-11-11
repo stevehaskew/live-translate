@@ -3,31 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ page_title|safe }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+    <title id="pageTitle">🌍 Live Translation</title>
+    <link rel="stylesheet" href="main.css">
 </head>
 <body>
     <div class="container">
         <header>
             <div class="header-content">
-                {% if logo_file %}
-                    <img src="{{ logo_file }}" alt="Logo">
-                {% endif %}
+                <img id="logoImage" src="" alt="Logo" style="display: none;">
                 <div class="header-text">
-                    <h1>{{ page_title|safe }}</h1>
+                    <h1 id="headerTitle">🌍 Live Translation</h1>
                     <p class="subtitle">Real-time speech translation for church.</p>
                 </div>
             </div>
             <button id="settingsToggle" class="settings-toggle" title="Toggle Settings" aria-label="Toggle Settings">⚙️</button>
         </header>
 
-        {% if not aws_available %}
-        <div class="warning-banner">
+        <div id="warningBanner" class="warning-banner" style="display: none;">
             <strong>⚠️ Limited Mode</strong>
             AWS Translate is not configured. Translation features are disabled. 
             Only English text will be displayed.
         </div>
-        {% endif %}
 
         <div class="controls-wrapper">
             <div class="controls" id="controlsPanel">
@@ -77,15 +73,62 @@
         </div>
 
         <footer>
-            {% if contact_text %}
-                <p>For more assistance please contact {{ contact_text }}</p>
-            {% else %}
-                <p>For more assistance please contact your support team</p>
-            {% endif %}
+            <p id="contactText">For more assistance please contact your support team</p>
         </footer>
     </div>
 
     <script>
+        // Configuration
+        let config = {
+            logoFile: '',
+            pageTitle: '🌍 Live Translation',
+            contactText: 'For more assistance please contact your support team',
+            websocketUrl: '' // Will be set from config.json or auto-detected
+        };
+
+        // Load configuration from config.json
+        fetch('config.json')
+            .then(response => response.json())
+            .then(loadedConfig => {
+                config = { ...config, ...loadedConfig };
+                applyConfiguration();
+            })
+            .catch(error => {
+                console.warn('Could not load config.json, using defaults:', error);
+                applyConfiguration();
+            });
+
+        function applyConfiguration() {
+            // Apply logo
+            const logoImage = document.getElementById('logoImage');
+            if (config.logoFile && config.logoFile.trim() !== '') {
+                logoImage.src = config.logoFile;
+                logoImage.style.display = 'block';
+            }
+
+            // Apply page title
+            if (config.pageTitle) {
+                const titleText = sanitizeHTML(config.pageTitle);
+                document.getElementById('pageTitle').textContent = titleText;
+                document.getElementById('headerTitle').textContent = titleText;
+            }
+
+            // Apply contact text
+            if (config.contactText) {
+                const contactText = sanitizeHTML(config.contactText);
+                document.getElementById('contactText').textContent = `For more assistance please contact ${contactText}`;
+            }
+
+            // Initialize WebSocket after config is loaded
+            connectWebSocket();
+        }
+
+        function sanitizeHTML(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.textContent;
+        }
+
         // DOM elements
         const statusIndicator = document.getElementById('statusIndicator');
         const statusText = document.getElementById('statusText');
@@ -94,8 +137,9 @@
         const settingsToggle = document.getElementById('settingsToggle');
         const closeSettingsBtn = document.getElementById('closeSettingsBtn');
         const controlsPanel = document.getElementById('controlsPanel');
+        const warningBanner = document.getElementById('warningBanner');
 
-        let awsAvailable = {{ 'true' if aws_available else 'false' }};
+        let awsAvailable = true; // Will be updated from server
         let messageCount = 0;
         let socket;
 
@@ -175,8 +219,15 @@
 
         // Connect to WebSocket
         function connectWebSocket() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            // Determine WebSocket URL
+            let wsUrl;
+            if (config.websocketUrl && config.websocketUrl.trim() !== '') {
+                wsUrl = config.websocketUrl;
+            } else {
+                // Auto-detect from current location
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                wsUrl = `${protocol}//${window.location.host}/ws`;
+            }
 
             try {
                 ws = new WebSocket(wsUrl);
@@ -236,6 +287,7 @@
                     type: type,
                     data: data || {}
                 };
+                console.debug('Sending message:', message);
                 ws.send(JSON.stringify(message));
             } else {
                 console.warn('WebSocket not connected, cannot send message');
@@ -248,6 +300,12 @@
                 case MessageType.CONNECTION_STATUS:
                     awsAvailable = message.data.aws_available;
                     console.log('AWS Translate available:', awsAvailable);
+                    // Show/hide warning banner
+                    if (!awsAvailable) {
+                        warningBanner.style.display = 'block';
+                    } else {
+                        warningBanner.style.display = 'none';
+                    }
                     break;
 
                 case MessageType.LANGUAGE_SET:
@@ -312,9 +370,6 @@
                 messageContainer.removeChild(messageContainer.lastChild);
             }
         }
-
-        // Initialize WebSocket connection
-        connectWebSocket();
 
         // Helper to reset the live feed to the empty state
         function setEmptyState() {
