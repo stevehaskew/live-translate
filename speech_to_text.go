@@ -674,7 +674,7 @@ func main() {
 	}
 
 	// Get server URL
-	serverURL := "http://localhost:5050"
+	serverURL := "http://localhost:5050/ws"
 	if flag.NArg() > 0 {
 		serverURL = flag.Arg(0)
 	}

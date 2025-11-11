@@ -63,7 +63,9 @@ class TestUICustomization(unittest.TestCase):
         self.assertEqual(
             default_title, "🌍 Live Translation", "Default title not correct"
         )
-        self.assertEqual(default_contact, "your support team", "Default contact not correct")
+        self.assertEqual(
+            default_contact, "your support team", "Default contact not correct"
+        )
 
 
 if __name__ == "__main__":

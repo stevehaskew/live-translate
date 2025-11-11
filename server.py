@@ -54,7 +54,7 @@ ui_config = {
     "logoFile": os.environ.get("LT_LOGO_FILE", ""),
     "pageTitle": os.environ.get("LT_PAGE_TITLE", "🌍 Live Translation"),
     "contactText": os.environ.get("LT_CONTACT_TEXT", "your support team"),
-    "websocketUrl": ""  # Auto-detected by the client
+    "websocketUrl": "",  # Auto-detected by the client
 }
 
 # Message type constants (for backward compatibility)
@@ -104,12 +104,6 @@ def index():
 def serve_static(filename):
     """Serve static files (CSS, images, etc.)."""
     return send_from_directory("static", filename)
-
-
-@app.route("/config.json")
-def config():
-    """Serve configuration from environment variables."""
-    return jsonify(ui_config)
 
 
 @app.route("/health")
@@ -192,16 +186,6 @@ def websocket_handler(ws):
                                 logger.error(
                                     f"Error sending to client {target_client_id}: {e}"
                                 )
-
-                elif msg_type == MESSAGE_TYPE_REQUEST_TRANSLATION:
-                    # Handle on-demand translation request from client
-                    text = msg_data.get("text", "")
-                    target_language = msg_data.get("target_language", "en")
-
-                    response = message_handler.handle_request_translation(
-                        text, target_language
-                    )
-                    send_message(ws, response["type"], response["data"])
 
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON from client {client_id}: {e}")
