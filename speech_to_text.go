@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"sync"
 	"log"
 	"os"
 	"os/signal"
@@ -48,10 +49,14 @@ type SpeechToText struct {
 	isRunning         bool
 	ctx               context.Context
 	awsRegion         string
+	verbose           bool
+	// connectedOnce is set to true once the socket has successfully connected
+	connectedOnce     bool
+	connMu            sync.RWMutex
 }
 
 // NewSpeechToText creates a new SpeechToText instance
-func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex int, awsRegion string) (*SpeechToText, error) {
+func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex int, awsRegion string, verbose bool) (*SpeechToText, error) {
 	return &SpeechToText{
 		ctx:         ctx,
 		serverURL:   serverURL,
@@ -59,6 +64,8 @@ func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex 
 		deviceIndex: deviceIndex,
 		isRunning:   false,
 		awsRegion:   awsRegion,
+		verbose:     verbose,
+		connectedOnce: false,
 	}, nil
 }
 
@@ -153,6 +160,9 @@ func (s *SpeechToText) connectToServer() error {
 	// Setup event handlers
 	client.On("connect", func(args ...interface{}) {
 		fmt.Printf("✓ Connected to server at %s\n", s.serverURL)
+		s.connMu.Lock()
+		s.connectedOnce = true
+		s.connMu.Unlock()
 	})
 
 	client.On("disconnect", func(args ...interface{}) {
@@ -169,7 +179,28 @@ func (s *SpeechToText) connectToServer() error {
 	})
 
 	// Wait a bit for connection to establish
-	time.Sleep(1 * time.Second)
+	// Wait up to 5s for the connect event; otherwise return an error so caller
+	// can decide whether to continue. This avoids emitting before the socket
+	// is fully ready (which can cause silent drops).
+	timeout := time.After(5 * time.Second)
+	start := time.Now()
+	for {
+		s.connMu.RLock()
+		ready := s.connectedOnce
+		s.connMu.RUnlock()
+		if ready {
+			break
+		}
+		if time.Since(start) > 5*time.Second {
+			return fmt.Errorf("timed out waiting for socket to connect")
+		}
+		select {
+		case <-timeout:
+			return fmt.Errorf("timed out waiting for socket to connect")
+		default:
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 
 	return nil
 }
@@ -355,6 +386,21 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 
 								// Broadcast to server
 								if s.client != nil {
+									// Ensure socket was connected at least once. If not, try a
+									// quick reconnect to avoid emitting before the socket is ready.
+									s.connMu.RLock()
+									connected := s.connectedOnce
+									s.connMu.RUnlock()
+									if !connected {
+										if s.verbose {
+											fmt.Println("[WARN] Socket not confirmed connected. Attempting reconnect before emit...")
+										}
+										if err := s.connectToServer(); err != nil {
+											fmt.Printf("[WARN] Reconnect failed: %v. Skipping emit.\n", err)
+											// skip emitting this message to avoid silent failures
+											continue
+										}
+									}
 									payload := map[string]interface{}{
 										"text":      transcript,
 										"timestamp": timestamp,
@@ -363,6 +409,9 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 										payload["api_key"] = s.apiKey
 									}
 									// Emit event to server
+									if s.verbose {
+										fmt.Printf("[DEBUG] Emitting 'new_text' to server: %+v\n", payload)
+									}
 									s.client.Emit("new_text", payload)
 								}
 							}
@@ -477,6 +526,8 @@ func main() {
 	listDevicesLong := flag.Bool("list-devices", false, "List all available audio input devices and exit")
 	deviceSpec := flag.String("d", "", "Select audio input device by index or name")
 	deviceSpecLong := flag.String("device", "", "Select audio input device by index or name")
+    verboseShort := flag.Bool("v", false, "Enable verbose debug logging")
+    verboseLong := flag.Bool("verbose", false, "Enable verbose debug logging")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [server_url]\n\n", os.Args[0])
@@ -499,6 +550,9 @@ func main() {
 	}
 
 	flag.Parse()
+
+	// Verbose flag
+	verbose := *verboseShort || *verboseLong
 
 	// Handle list devices flag
 	if *listDevices || *listDevicesLong {
@@ -558,6 +612,9 @@ func main() {
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Printf("\nServer URL: %s\n", serverURL)
 	fmt.Printf("AWS Region: %s\n", awsRegion)
+if verbose {
+    fmt.Println("Verbose: true")
+}
 	if deviceIndex >= 0 {
 		if deviceName != "" {
 			fmt.Printf("Audio Device: %s (index %d)\n", deviceName, deviceIndex)
@@ -583,7 +640,7 @@ func main() {
 	}()
 
 	// Create and run the application
-	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex, awsRegion)
+	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex, awsRegion, verbose)
 	if err != nil {
 		log.Fatalf("Error creating application: %v", err)
 	}
