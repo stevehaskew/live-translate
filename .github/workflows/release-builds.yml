@@ -1,0 +1,115 @@
+name: Build & attach Go release assets
+
+on:
+  release:
+    types: [created, published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    name: Build & upload ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # - name: linux-amd64
+          #   runner: ubuntu-latest
+          #   goos: linux
+          #   goarch: amd64
+          #   out: speech_to_text_go-linux-amd64
+          #   content_type: application/octet-stream
+          # - name: darwin-amd64
+          #   runner: macos-latest
+          #   goos: darwin
+          #   goarch: amd64
+          #   out: speech_to_text_go-darwin-amd64
+          #   content_type: application/octet-stream
+          - name: darwin-arm64
+            runner: macos-latest
+            goos: darwin
+            goarch: arm64
+            out: speech_to_text_go-darwin-arm64
+            content_type: application/octet-stream
+          # - name: windows-amd64
+          #   runner: windows-latest
+          #   goos: windows
+          #   goarch: amd64
+          #   out: speech_to_text_go-windows-amd64.exe
+          #   content_type: application/octet-stream
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.25'
+
+      - name: Install PortAudio (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libportaudio2 portaudio19-dev
+
+      - name: Install PortAudio (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install portaudio
+
+      - name: Install PortAudio (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install portaudio -y
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p build
+          echo "Building $GOOS/$GOARCH -> build/${{ matrix.out }}"
+          # Disable CGO if you want pure-go cross-compiles; keep CGO for native builds
+          go build -o build/${{ matrix.out }} ./speech_to_text.go
+
+      - name: Create zip (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          cd build
+          zip -j "${{ matrix.out }}.zip" "${{ matrix.out }}"
+          shasum -a 256 "${{ matrix.out }}.zip" > "${{ matrix.out }}.zip.sha256"
+
+      - name: Create zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $out = "build\${{ matrix.out }}"
+          $zip = "$out.zip"
+          Compress-Archive -Path $out -DestinationPath $zip -Force
+          $hash = Get-FileHash -Algorithm SHA256 $zip
+          $hash.Hash | Out-File -Encoding ascii "$out.zip.sha256"
+
+      - name: Upload zip to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: build/${{ matrix.out }}.zip
+          asset_name: ${{ matrix.out }}.zip
+          asset_content_type: application/zip
+
+      - name: Upload checksum to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: build/${{ matrix.out }}.zip.sha256
+          asset_name: ${{ matrix.out }}.zip.sha256
+          asset_content_type: text/plain

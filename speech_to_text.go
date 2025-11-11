@@ -163,6 +163,11 @@ func (s *SpeechToText) connectToServer() error {
 		fmt.Printf("✗ Connection error: %v\n", args)
 	})
 
+	// Optional server-side connection acknowledgement (from server.py -> connection_status)
+	client.On("connection_status", func(args ...interface{}) {
+		fmt.Printf("Server connection_status: %v\n", args)
+	})
+
 	// Wait a bit for connection to establish
 	time.Sleep(1 * time.Second)
 
@@ -357,6 +362,7 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 									if s.apiKey != "" {
 										payload["api_key"] = s.apiKey
 									}
+									// Emit event to server
 									s.client.Emit("new_text", payload)
 								}
 							}
