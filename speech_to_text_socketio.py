@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Speech-to-Text Application with WebSocket
+Speech-to-Text Application
 Captures audio from microphone and converts it to text in real-time.
 """
 
 import speech_recognition as sr
-import websocket
-import json
+import socketio
 import time
 import sys
 import os
@@ -15,7 +14,6 @@ from datetime import datetime
 from dotenv import load_dotenv
 import threading
 import queue
-import ssl
 
 # Load environment variables
 load_dotenv()
@@ -25,7 +23,7 @@ class SpeechToText:
     """Handles speech recognition and broadcasts text to server."""
 
     def __init__(
-        self, server_url="http://localhost:5050", api_key=None, device_index=None
+        self, server_url="http://localhost:5000", api_key=None, device_index=None
     ):
         """
         Initialize the speech recognition system.
@@ -37,7 +35,7 @@ class SpeechToText:
         """
         self.recognizer = sr.Recognizer()
         self.microphone = sr.Microphone(device_index=device_index)
-        self.ws = None
+        self.sio = socketio.Client()
         self.server_url = server_url
         self.api_key = api_key or os.environ.get("API_KEY")
         self.is_running = False
@@ -54,53 +52,33 @@ class SpeechToText:
         # Thread for processing speech recognition
         self.recognition_thread = None
 
+        # Setup SocketIO event handlers
+        self.setup_socketio()
+
+    def setup_socketio(self):
+        """Setup SocketIO connection handlers."""
+
+        @self.sio.on("connect")
+        def on_connect():
+            print(f"✓ Connected to server at {self.server_url}")
+
+        @self.sio.on("disconnect")
+        def on_disconnect():
+            print("✗ Disconnected from server")
+
+        @self.sio.on("connect_error")
+        def on_connect_error(data):
+            print(f"✗ Connection error: {data}")
+
     def connect_to_server(self):
-        """Connect to the Flask server via WebSocket."""
+        """Connect to the Flask server via SocketIO."""
         try:
-            # Convert http(s) to ws(s)
-            ws_url = self.server_url.replace("http://", "ws://").replace("https://", "wss://")
-            if not ws_url.startswith("ws://") and not ws_url.startswith("wss://"):
-                ws_url = "ws://" + ws_url
-            
-            # Add /ws path if not present
-            if not ws_url.endswith("/ws"):
-                ws_url = ws_url.rstrip("/") + "/ws"
-            
-            print(f"Connecting to server at {ws_url}...")
-            
-            # Create WebSocket connection
-            if ws_url.startswith("wss://"):
-                self.ws = websocket.create_connection(
-                    ws_url,
-                    sslopt={"cert_reqs": ssl.CERT_NONE}
-                )
-            else:
-                self.ws = websocket.create_connection(ws_url)
-            
-            print(f"✓ Connected to server at {ws_url}")
-            
-            # Receive connection status
-            response = self.ws.recv()
-            msg = json.loads(response)
-            if msg.get("type") == "connection_status":
-                print(f"Server status: {msg.get('data', {})}")
-            
+            print(f"Connecting to server at {self.server_url}...")
+            self.sio.connect(self.server_url)
             return True
         except Exception as e:
             print(f"✗ Failed to connect to server: {e}")
             return False
-
-    def send_message(self, msg_type, data):
-        """Send a WebSocket message to the server."""
-        if self.ws:
-            try:
-                message = {
-                    "type": msg_type,
-                    "data": data
-                }
-                self.ws.send(json.dumps(message))
-            except Exception as e:
-                print(f"✗ Error sending message: {e}")
 
     def calibrate_microphone(self):
         """Calibrate microphone for ambient noise."""
@@ -136,15 +114,11 @@ class SpeechToText:
                     print(f"[{timestamp}] Recognized: {text}")
 
                     # Broadcast to server
-                    if self.ws:
-                        data = {
-                            "text": text,
-                            "timestamp": timestamp
-                        }
+                    if self.sio.connected:
+                        payload = {"text": text, "timestamp": timestamp}
                         if self.api_key:
-                            data["api_key"] = self.api_key
-                        
-                        self.send_message("new_text", data)
+                            payload["api_key"] = self.api_key
+                        self.sio.emit("new_text", payload)
                     else:
                         print("⚠ Not connected to server. Attempting to reconnect...")
                         self.connect_to_server()
@@ -244,8 +218,8 @@ class SpeechToText:
         except KeyboardInterrupt:
             print("\n\nShutting down...")
         finally:
-            if self.ws:
-                self.ws.close()
+            if self.sio.connected:
+                self.sio.disconnect()
             print("✓ Speech recognition stopped.")
 
 
@@ -397,7 +371,7 @@ Environment Variables:
                 print("Use -l to list available devices. Using default device.")
 
     print("=" * 60)
-    print("Live Translation - Speech-to-Text (WebSocket)")
+    print("Live Translation - Speech-to-Text")
     print("=" * 60)
     print(f"\nServer URL: {args.server_url}")
     if device_index is not None:

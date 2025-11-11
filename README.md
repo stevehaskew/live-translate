@@ -16,9 +16,16 @@ A real-time speech-to-text translation application that captures audio from a mi
 The application consists of two main components:
 
 1. **Speech-to-Text Client**: Captures audio from the microphone and converts speech to text
-   - **Go Client** (`speech_to_text.go`): Native executable (recommended) - uses AWS Transcribe Streaming, no Python dependencies required
-   - **Python Client** (`speech_to_text.py`): Legacy Python-based client - uses Google Speech Recognition (free API)
-2. **Web Server** (`server.py`): Flask-based server with WebSocket support that receives text, translates it using AWS Translate, and broadcasts to connected web clients
+   - **Go Client** (`speech_to_text.go`): Native executable (recommended) - uses AWS Transcribe Streaming and plain WebSockets
+   - **Python Client** (`speech_to_text.py`): Python-based client - uses Google Speech Recognition (free API) and plain WebSockets
+2. **Web Server** (`server.py`): Flask-based server with native WebSocket support (using flask-sock) that receives text, translates it using AWS Translate, and broadcasts to connected web clients
+
+### Communication Protocol
+
+The application uses **plain WebSockets** (not Socket.IO) for real-time communication between all components:
+- Speech-to-text clients connect via WebSocket and send recognized text
+- Web browser clients connect via WebSocket to receive translations
+- All messages are JSON-formatted with a `type` and `data` structure
 
 ## Requirements
 
