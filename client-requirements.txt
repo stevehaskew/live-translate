@@ -1,6 +1,0 @@
-SpeechRecognition==3.14.3
-PyAudio==0.2.14
-
-# Optional (for better async WebSocket support in client projects)
-# gevent==24.2.1
-# eventlet==0.33.3

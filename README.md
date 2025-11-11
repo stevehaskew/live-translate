@@ -443,22 +443,17 @@ The server will automatically detect and use gevent or eventlet if installed. No
 ```
 live-translate/
 ├── speech_to_text.go      # Go speech recognition client (recommended)
-├── speech_to_text.py      # Python speech recognition client (legacy)
 ├── server.py              # Flask web server
-├── test_client.py         # Test script (no microphone needed)
-├── start.sh               # Quick start script for Python client (macOS/Linux)
 ├── Makefile               # Build system for Go client
 ├── go.mod                 # Go module dependencies
 ├── go.sum                 # Go module checksums
 ├── templates/
 │   └── index.html        # Web interface
-├── requirements.txt       # Python dependencies for server
-├── client-requirements.txt # Python dependencies for Python client
-├── server-requirements.txt # Python dependencies for server only
+├── requirements.txt      # Python dependencies for server
 ├── .env.example          # Environment variables template
-├── .gitignore           # Git ignore rules
-├── LICENSE              # License file
-└── README.md            # This file
+├── .gitignore            # Git ignore rules
+├── LICENSE               # License file
+└── README.md             # This file
 ```
 
 ### Running in Development Mode

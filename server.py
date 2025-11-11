@@ -117,7 +117,7 @@ def broadcast_message(msg_type, data, exclude_client=None):
     """Broadcast a message to all connected clients except the excluded one."""
     message = {"type": msg_type, "data": data}
     message_json = json.dumps(message)
-    
+
     clients_to_remove = []
     for client_id, client_info in connected_clients.items():
         if client_id == exclude_client:
@@ -127,7 +127,7 @@ def broadcast_message(msg_type, data, exclude_client=None):
         except Exception as e:
             logger.error(f"Error sending to client {client_id}: {e}")
             clients_to_remove.append(client_id)
-    
+
     # Remove disconnected clients
     for client_id in clients_to_remove:
         if client_id in connected_clients:
@@ -189,9 +189,7 @@ def websocket_handler(ws):
                     language = msg_data.get("language", "en")
                     connected_clients[client_id]["language"] = language
                     logger.info(f"Client {client_id} language set to: {language}")
-                    send_message(
-                        ws, MESSAGE_TYPE_LANGUAGE_SET, {"language": language}
-                    )
+                    send_message(ws, MESSAGE_TYPE_LANGUAGE_SET, {"language": language})
 
                 elif msg_type == MESSAGE_TYPE_NEW_TEXT:
                     # Handle new text from speech-to-text application
@@ -200,7 +198,9 @@ def websocket_handler(ws):
                         provided_key = msg_data.get("api_key", "")
                         # Use constant-time comparison to prevent timing attacks
                         if not secrets.compare_digest(provided_key, API_KEY):
-                            logger.warning(f"Unauthorized new_text attempt from {client_id}")
+                            logger.warning(
+                                f"Unauthorized new_text attempt from {client_id}"
+                            )
                             send_message(
                                 ws,
                                 MESSAGE_TYPE_ERROR,
@@ -221,7 +221,9 @@ def websocket_handler(ws):
                         if target_language == "en":
                             translated_text = original_text
                         else:
-                            translated_text = translate_text(original_text, target_language)
+                            translated_text = translate_text(
+                                original_text, target_language
+                            )
 
                         try:
                             send_message(
@@ -264,7 +266,9 @@ def websocket_handler(ws):
     finally:
         if client_id in connected_clients:
             del connected_clients[client_id]
-        logger.info(f"Client disconnected: {client_id} (Total: {len(connected_clients)})")
+        logger.info(
+            f"Client disconnected: {client_id} (Total: {len(connected_clients)})"
+        )
 
 
 def main():

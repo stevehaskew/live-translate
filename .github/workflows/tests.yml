@@ -37,17 +37,11 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          # Note: PyAudio requires portaudio, but we don't need it for tests
-          # Tests mock the audio components
       
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install core dependencies needed for tests (excluding PyAudio)
-          # SpeechRecognition is included as it doesn't require PyAudio to install
-          pip install Flask==3.1.2 Flask-SocketIO==5.5.1 python-socketio==5.14.3
-          pip install boto3==1.40.69 python-dotenv==1.2.1 requests==2.32.5
-          pip install SpeechRecognition==3.14.3
+          pip install -r requirements.txt
       
       - name: Run unit tests
         run: |
