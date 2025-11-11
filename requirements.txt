@@ -9,3 +9,4 @@ python-dotenv==1.2.1
 
 # Production WSGI server (optional)
 gunicorn==23.0.0
+gevent==25.9.1
