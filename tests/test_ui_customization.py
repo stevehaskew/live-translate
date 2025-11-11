@@ -23,24 +23,25 @@ class TestUICustomization(unittest.TestCase):
 
     def test_ui_config_loading(self):
         """Test that UI config loads environment variables correctly."""
-        # Test that values are loaded
+        # Test that values are loaded (using camelCase keys for config.json format)
         self.assertEqual(
-            ui_config["logo_file"], "/static/logo.png", "Logo file not loaded correctly"
+            ui_config["logoFile"], "/static/logo.png", "Logo file not loaded correctly"
         )
         self.assertEqual(
-            ui_config["page_title"],
-            html.escape("Test Title"),
+            ui_config["pageTitle"],
+            "Test Title",
             "Page title not loaded correctly",
         )
         self.assertEqual(
-            ui_config["contact_text"],
+            ui_config["contactText"],
             "test@example.com",
             "Contact text not loaded correctly",
         )
 
     def test_html_sanitization(self):
         """Test that HTML in page title is properly sanitized."""
-        # Test XSS prevention
+        # Note: HTML sanitization is now handled client-side in the JavaScript
+        # This test validates the escape function still works
         malicious_input = "<script>alert('xss')</script>Test"
         sanitized = html.escape(malicious_input)
 
@@ -55,16 +56,16 @@ class TestUICustomization(unittest.TestCase):
 
         # Verify defaults computed independently of server import
         default_logo = os.environ.get("LT_LOGO_FILE", "")
-        default_title = html.escape(
-            os.environ.get("LT_PAGE_TITLE", "🌍 Live Translation")
-        )
-        default_contact = os.environ.get("LT_CONTACT_TEXT", "")
+        default_title = os.environ.get("LT_PAGE_TITLE", "🌍 Live Translation")
+        default_contact = os.environ.get("LT_CONTACT_TEXT", "your support team")
 
         self.assertEqual(default_logo, "", "Default logo should be empty string")
         self.assertEqual(
             default_title, "🌍 Live Translation", "Default title not correct"
         )
-        self.assertEqual(default_contact, "", "Default contact should be empty string")
+        self.assertEqual(
+            default_contact, "your support team", "Default contact not correct"
+        )
 
 
 if __name__ == "__main__":
