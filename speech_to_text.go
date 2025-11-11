@@ -72,6 +72,8 @@ type SpeechToText struct {
 	// connectedOnce is set to true once the socket has successfully connected
 	connectedOnce     bool
 	connMu            sync.RWMutex
+	shutdownRequested chan struct{}
+	shutdownOnce      sync.Once
 }
 
 // NewSpeechToText creates a new SpeechToText instance
@@ -85,6 +87,7 @@ func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex 
 		awsRegion:   awsRegion,
 		verbose:     verbose,
 		connectedOnce: false,
+		shutdownRequested: make(chan struct{}),
 	}, nil
 }
 
@@ -240,9 +243,19 @@ func (s *SpeechToText) readMessages() {
 		var msg WSMessage
 		err := s.wsConn.ReadJSON(&msg)
 		if err != nil {
-			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				log.Printf("WebSocket read error: %v", err)
+			// If we're shutting down, avoid noisy error logs for closed connection.
+			select {
+			case <-s.shutdownRequested:
+				return
+			default:
 			}
+			if s.ctx != nil && s.ctx.Err() != nil {
+				return
+			}
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				return
+			}
+			log.Printf("WebSocket read error: %v", err)
 			return
 		}
 
@@ -491,9 +504,25 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 
 	// Main audio capture loop
 	go func() {
-		for s.isRunning {
+		for {
 			select {
 			case <-s.ctx.Done():
+				// Context cancelled; close event stream and exit
+				eventStream.Close()
+				return
+			case <-s.shutdownRequested:
+				// Graceful shutdown requested: perform one final read/send if possible
+				if s.stream != nil {
+					if err := s.stream.Read(); err == nil {
+						audioBytes := int16ToBytes(buffer)
+						// Use background context for the final send so it can complete
+						if err := eventStream.Send(context.Background(), &types.AudioStreamMemberAudioEvent{
+							Value: types.AudioEvent{AudioChunk: audioBytes},
+						}); err != nil {
+							log.Printf("Error sending final audio chunk: %v", err)
+						}
+					}
+				}
 				eventStream.Close()
 				return
 			default:
@@ -514,13 +543,16 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 				})
 				if err != nil {
 					log.Printf("Error sending audio: %v", err)
-					if !s.isRunning {
+					// If we get an error and shutdown was requested, exit
+					select {
+					case <-s.shutdownRequested:
+						eventStream.Close()
 						return
+					default:
 					}
 				}
 			}
 		}
-		eventStream.Close()
 	}()
 
 	// Wait for completion or error
@@ -575,6 +607,25 @@ func (s *SpeechToText) Run() error {
 
 	fmt.Println("✓ Speech recognition stopped.")
 	return nil
+}
+
+// GracefulStop requests the speech-to-text process finish current work and stop.
+// It closes the shutdownRequested channel once which is observed by the audio loop
+// so the client will attempt to send one final audio chunk before closing.
+func (s *SpeechToText) GracefulStop() {
+	s.shutdownOnce.Do(func() {
+		close(s.shutdownRequested)
+	})
+	s.connMu.Lock()
+	s.isRunning = false
+	s.connMu.Unlock()
+
+	// Attempt a polite WebSocket close so the remote end knows we're shutting down.
+	if s.wsConn != nil {
+		// Best-effort: send a close control message, then close the connection.
+		_ = s.wsConn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "client shutdown"))
+		s.wsConn.Close()
+	}
 }
 
 func main() {
@@ -689,21 +740,26 @@ if verbose {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle interrupt signals
+	// Create the application
+	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex, awsRegion, verbose)
+	if err != nil {
+		log.Fatalf("Error creating application: %v", err)
+	}
+
+	// Handle interrupt signals (Ctrl-C / SIGTERM) and request graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	go func() {
 		<-sigChan
 		fmt.Println("\n\nStopping speech recognition...")
+		app.GracefulStop()
+		// Give a short window for final audio to be sent, then cancel context to force cleanup
+		time.Sleep(500 * time.Millisecond)
 		cancel()
 	}()
 
-	// Create and run the application
-	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex, awsRegion, verbose)
-	if err != nil {
-		log.Fatalf("Error creating application: %v", err)
-	}
+	// Ctrl-C / SIGTERM handling is the preferred way to stop the program.
 
 	// Run the application
 	if err := app.Run(); err != nil {
