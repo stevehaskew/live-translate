@@ -5,15 +5,16 @@ Receives text from speech-to-text app and broadcasts translations to web clients
 """
 
 import os
-import secrets
 import json
 import logging
 import html
-from flask import Flask, render_template, request
+from flask import Flask, render_template
 from flask_sock import Sock
-import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
 from dotenv import load_dotenv
+
+# Import our refactored modules
+from client_map import TranslationClientMap
+from message_handler import MessageHandler, TranslationService
 
 # Load environment variables
 load_dotenv()
@@ -37,23 +38,17 @@ app.config["SECRET_KEY"] = os.environ.get(
 # Initialize WebSocket support
 sock = Sock(app)
 
-# Initialize AWS Translate client
-try:
-    translate_client = boto3.client(
-        "translate",
-        region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
-        aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY"),
-    )
-    aws_available = True
-    logger.info("✓ AWS Translate client initialized")
-except (NoCredentialsError, Exception) as e:
-    aws_available = False
-    logger.warning(f"⚠ AWS Translate not available: {e}")
-    logger.warning("Translation features will be limited.")
+# Initialize translation service
+translation_service = TranslationService(
+    region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+)
+aws_available = translation_service.is_available()
 
-# Store connected clients with their preferred languages
-connected_clients = {}
+# Initialize message handler
+message_handler = MessageHandler(translation_service, API_KEY)
+
+# Initialize client map
+client_map = TranslationClientMap()
 
 # Load UI customization settings
 ui_config = {
@@ -62,49 +57,15 @@ ui_config = {
     "contact_text": os.environ.get("LT_CONTACT_TEXT", ""),
 }
 
-# Message types for WebSocket communication
-MESSAGE_TYPE_CONNECTION_STATUS = "connection_status"
-MESSAGE_TYPE_SET_LANGUAGE = "set_language"
-MESSAGE_TYPE_LANGUAGE_SET = "language_set"
-MESSAGE_TYPE_NEW_TEXT = "new_text"
-MESSAGE_TYPE_TRANSLATED_TEXT = "translated_text"
-MESSAGE_TYPE_REQUEST_TRANSLATION = "request_translation"
-MESSAGE_TYPE_TRANSLATION_RESULT = "translation_result"
-MESSAGE_TYPE_ERROR = "error"
-
-
-def translate_text(text, target_language, source_language="auto"):
-    """
-    Translate text using AWS Translate.
-
-    Args:
-        text: Text to translate
-        target_language: Target language code (e.g., 'es' for Spanish)
-        source_language: Source language code ('auto' for auto-detection)
-
-    Returns:
-        Translated text or original text if translation fails
-    """
-    if not aws_available:
-        return text
-
-    # Don't translate if target is English (source language)
-    if target_language == "en":
-        return text
-
-    try:
-        response = translate_client.translate_text(
-            Text=text,
-            SourceLanguageCode=source_language,
-            TargetLanguageCode=target_language,
-        )
-        return response["TranslatedText"]
-    except ClientError as e:
-        logger.error(f"Translation error: {e}")
-        return text
-    except Exception as e:
-        logger.error(f"Unexpected translation error: {e}")
-        return text
+# Message type constants (for backward compatibility)
+MESSAGE_TYPE_CONNECTION_STATUS = message_handler.MESSAGE_TYPE_CONNECTION_STATUS
+MESSAGE_TYPE_SET_LANGUAGE = message_handler.MESSAGE_TYPE_SET_LANGUAGE
+MESSAGE_TYPE_LANGUAGE_SET = message_handler.MESSAGE_TYPE_LANGUAGE_SET
+MESSAGE_TYPE_NEW_TEXT = message_handler.MESSAGE_TYPE_NEW_TEXT
+MESSAGE_TYPE_TRANSLATED_TEXT = message_handler.MESSAGE_TYPE_TRANSLATED_TEXT
+MESSAGE_TYPE_REQUEST_TRANSLATION = message_handler.MESSAGE_TYPE_REQUEST_TRANSLATION
+MESSAGE_TYPE_TRANSLATION_RESULT = message_handler.MESSAGE_TYPE_TRANSLATION_RESULT
+MESSAGE_TYPE_ERROR = message_handler.MESSAGE_TYPE_ERROR
 
 
 def send_message(ws, msg_type, data):
@@ -119,7 +80,7 @@ def broadcast_message(msg_type, data, exclude_client=None):
     message_json = json.dumps(message)
 
     clients_to_remove = []
-    for client_id, client_info in connected_clients.items():
+    for client_id, client_info in client_map.get_all_clients().items():
         if client_id == exclude_client:
             continue
         try:
@@ -130,8 +91,7 @@ def broadcast_message(msg_type, data, exclude_client=None):
 
     # Remove disconnected clients
     for client_id in clients_to_remove:
-        if client_id in connected_clients:
-            del connected_clients[client_id]
+        client_map.delete_client(client_id)
 
 
 @app.route("/")
@@ -152,7 +112,7 @@ def health():
     return {
         "status": "healthy",
         "aws_translate": aws_available,
-        "connected_clients": len(connected_clients),
+        "connected_clients": client_map.count(),
     }
 
 
@@ -160,16 +120,13 @@ def health():
 def websocket_handler(ws):
     """Handle WebSocket connections."""
     client_id = id(ws)
-    connected_clients[client_id] = {"language": "en", "ws": ws}
-    logger.info(f"Client connected: {client_id} (Total: {len(connected_clients)})")
+    client_map.add_client(client_id, language="en", ws=ws)
+    logger.info(f"Client connected: {client_id} (Total: {client_map.count()})")
 
     # Send connection status
     try:
-        send_message(
-            ws,
-            MESSAGE_TYPE_CONNECTION_STATUS,
-            {"status": "connected", "aws_available": aws_available},
-        )
+        connection_msg = message_handler.create_connection_status_message()
+        send_message(ws, connection_msg["type"], connection_msg["data"])
     except Exception as e:
         logger.error(f"Error sending connection status: {e}")
 
@@ -187,74 +144,58 @@ def websocket_handler(ws):
                 if msg_type == MESSAGE_TYPE_SET_LANGUAGE:
                     # Handle language preference from client
                     language = msg_data.get("language", "en")
-                    connected_clients[client_id]["language"] = language
-                    logger.info(f"Client {client_id} language set to: {language}")
-                    send_message(ws, MESSAGE_TYPE_LANGUAGE_SET, {"language": language})
+                    response = message_handler.handle_set_language(
+                        client_id, language, client_map
+                    )
+                    send_message(ws, response["type"], response["data"])
 
                 elif msg_type == MESSAGE_TYPE_NEW_TEXT:
                     # Handle new text from speech-to-text application
-                    # Validate API key if configured
-                    if API_KEY:
-                        provided_key = msg_data.get("api_key", "")
-                        # Use constant-time comparison to prevent timing attacks
-                        if not secrets.compare_digest(provided_key, API_KEY):
-                            logger.warning(
-                                f"Unauthorized new_text attempt from {client_id}"
-                            )
-                            send_message(
-                                ws,
-                                MESSAGE_TYPE_ERROR,
-                                {"message": "Unauthorized: Invalid API key"},
-                            )
-                            continue
-
                     original_text = msg_data.get("text", "")
                     timestamp = msg_data.get("timestamp", "")
+                    provided_key = msg_data.get("api_key", "")
 
-                    logger.info(f"New text received: {original_text}")
+                    result = message_handler.handle_new_text(
+                        original_text, timestamp, provided_key, client_map
+                    )
 
-                    # Broadcast to all clients with translation
-                    for cid, client_info in list(connected_clients.items()):
-                        target_language = client_info.get("language", "en")
-                        client_ws = client_info.get("ws")
+                    if result["status"] == "error":
+                        logger.warning(
+                            f"Unauthorized new_text attempt from {client_id}"
+                        )
+                        error_msg = message_handler.create_error_message(
+                            result["error"]
+                        )
+                        send_message(ws, error_msg["type"], error_msg["data"])
+                        continue
 
-                        if target_language == "en":
-                            translated_text = original_text
-                        else:
-                            translated_text = translate_text(
-                                original_text, target_language
-                            )
+                    # Broadcast translations to all clients
+                    for translation_info in result["translations"]:
+                        target_client_id = translation_info["client_id"]
+                        translation = translation_info["translation"]
+                        client_info = client_map.get_client(target_client_id)
 
-                        try:
-                            send_message(
-                                client_ws,
-                                MESSAGE_TYPE_TRANSLATED_TEXT,
-                                {
-                                    "text": translated_text,
-                                    "original": original_text,
-                                    "timestamp": timestamp,
-                                    "language": target_language,
-                                },
-                            )
-                        except Exception as e:
-                            logger.error(f"Error sending to client {cid}: {e}")
+                        if client_info and client_info.get("ws"):
+                            try:
+                                send_message(
+                                    client_info["ws"],
+                                    MESSAGE_TYPE_TRANSLATED_TEXT,
+                                    translation,
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"Error sending to client {target_client_id}: {e}"
+                                )
 
                 elif msg_type == MESSAGE_TYPE_REQUEST_TRANSLATION:
                     # Handle on-demand translation request from client
                     text = msg_data.get("text", "")
                     target_language = msg_data.get("target_language", "en")
 
-                    translated_text = translate_text(text, target_language)
-
-                    send_message(
-                        ws,
-                        MESSAGE_TYPE_TRANSLATION_RESULT,
-                        {
-                            "original": text,
-                            "translated": translated_text,
-                            "language": target_language,
-                        },
+                    response = message_handler.handle_request_translation(
+                        text, target_language
                     )
+                    send_message(ws, response["type"], response["data"])
 
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON from client {client_id}: {e}")
@@ -264,11 +205,8 @@ def websocket_handler(ws):
     except Exception as e:
         logger.error(f"WebSocket error for client {client_id}: {e}")
     finally:
-        if client_id in connected_clients:
-            del connected_clients[client_id]
-        logger.info(
-            f"Client disconnected: {client_id} (Total: {len(connected_clients)})"
-        )
+        client_map.delete_client(client_id)
+        logger.info(f"Client disconnected: {client_id} (Total: {client_map.count()})")
 
 
 def main():

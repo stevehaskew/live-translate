@@ -225,9 +225,10 @@ live-translate/
 ### After Coding
 
 1. Run relevant tests: `python -m unittest test_<module>`
-2. Test manually with real server and clients
-3. Check for security issues (API key validation, input sanitization)
-4. Update documentation if behavior changes
+2. Run Python 'black' tool for consistent formatting: `black .`
+3. Test manually with real server and clients
+4. Check for security issues (API key validation, input sanitization)
+5. Update documentation if behavior changes
 
 ## Dependencies Management
 
