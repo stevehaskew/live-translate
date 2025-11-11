@@ -61,9 +61,6 @@
         </div>
 
         <div class="translation-feed">
-            <div class="feed-header">
-                <h2>Live Feed</h2>
-            </div>
             <div id="messageContainer">
                 <div class="empty-state">
                     <div class="empty-state-icon">🎤</div>
@@ -331,7 +328,7 @@
 
         // Handle translated text message
         function handleTranslatedText(data) {
-            console.log('Received translation:', data);
+            console.debug('Received translation:', data);
             
             // Remove empty state if this is the first message
             if (messageCount === 0) {
@@ -351,7 +348,7 @@
             text.className = 'message-text';
             text.textContent = data.text;
 
-            messageDiv.appendChild(timestamp);
+            // messageDiv.appendChild(timestamp);
             messageDiv.appendChild(text);
 
             // Show original text if translated
@@ -452,6 +449,7 @@
                 console.warn('Could not save language preference:', err);
             }
             sendMessage(MessageType.SET_LANGUAGE, { lang: selectedLanguage });
+            toggleSettings(); // Close settings panel after selection
         });
 
         // Handle page visibility to reconnect if needed
