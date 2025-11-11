@@ -1,0 +1,26 @@
+# Example Terraform variables file
+# Copy this file to terraform.tfvars and update with your values
+
+# AWS region for all resources
+aws_region = "us-east-1"
+
+# Domain name for the static website (e.g., translate.example.com)
+# This will be used for CloudFront distribution alias
+domain_name = "translate.example.com"
+
+# API domain name (optional - defaults to "api.{domain_name}")
+# If not specified, will use api.translate.example.com
+# api_domain_name = "api.translate.example.com"
+
+# API key for authenticating speech-to-text client communication
+# Generate a secure random key: openssl rand -base64 32
+api_key = "your-secure-api-key-here"
+
+# Environment name (dev, staging, production)
+environment = "production"
+
+# Project name for resource naming
+project_name = "live-translate"
+
+# Path to Lambda deployment package (relative to terraform directory)
+lambda_zip_path = "../lambda_deployment.zip"

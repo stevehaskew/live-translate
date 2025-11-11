@@ -10,6 +10,24 @@ A real-time speech-to-text translation application that captures audio from a mi
 - 💻 **Web Interface**: Clean, modern UI for viewing translations
 - 🍎 **Mac Compatible**: Optimized for macOS with PyAudio support
 - ⚡ **Dual Mode**: Works with or without AWS Translate
+- ☁️ **Multiple Deployment Options**: Run locally with Flask or deploy to AWS with Lambda + API Gateway
+
+## Deployment Options
+
+This application supports two deployment modes:
+
+1. **Local/Traditional Deployment** (Flask-based)
+   - Quick setup for local development or small-scale deployments
+   - Uses Flask web server with WebSocket support
+   - Suitable for single-server deployments
+   - See [Usage](#usage) section below
+
+2. **AWS Cloud Deployment** (Serverless)
+   - Scalable, serverless architecture using AWS Lambda + API Gateway
+   - Static website hosting via S3 + CloudFront
+   - Distributed client storage with DynamoDB
+   - Automatic scaling and high availability
+   - See [terraform/README.md](terraform/README.md) for deployment instructions
 
 ## Architecture
 
@@ -19,6 +37,8 @@ The application consists of two main components:
    - **Go Client** (`speech_to_text.go`): Native executable (recommended) - uses AWS Transcribe Streaming and plain WebSockets
    - **Python Client** (`speech_to_text.py`): Python-based client - uses Google Speech Recognition (free API) and plain WebSockets
 2. **Web Server** (`server.py`): Flask-based server with native WebSocket support (using flask-sock) that receives text, translates it using AWS Translate, and broadcasts to connected web clients
+
+**Note**: For AWS cloud deployment, the Flask server is replaced with AWS Lambda functions and API Gateway. See the [Deployment Options](#deployment-options) section above.
 
 ### Communication Protocol
 
@@ -436,6 +456,69 @@ pip install eventlet
 
 The server will automatically detect and use gevent or eventlet if installed. No configuration changes needed.
 
+## AWS Cloud Deployment
+
+For production deployments requiring high availability, automatic scaling, and serverless architecture, you can deploy to AWS using:
+
+- **API Gateway** (WebSocket API) for real-time communication
+- **AWS Lambda** for serverless compute
+- **DynamoDB** for distributed client connection storage
+- **S3 + CloudFront** for static website hosting
+- **Terraform** for infrastructure as code
+
+### Quick Start (AWS Deployment)
+
+1. **Build Lambda Deployment Package**:
+   ```bash
+   ./scripts/build_lambda.sh
+   ```
+
+2. **Configure Terraform Variables**:
+   ```bash
+   cd terraform
+   cp terraform.tfvars.example terraform.tfvars
+   # Edit terraform.tfvars with your settings
+   ```
+
+3. **Deploy Infrastructure**:
+   ```bash
+   terraform init
+   terraform apply
+   ```
+
+4. **Upload Static Website Files**:
+   ```bash
+   BUCKET_NAME=$(terraform output -raw s3_bucket_name)
+   aws s3 sync ../static/ s3://$BUCKET_NAME/
+   ```
+
+5. **Create Configuration File**:
+   ```bash
+   cat > config.json << EOF
+   {
+     "logoFile": "",
+     "pageTitle": "🌍 Live Translation",
+     "contactText": "support@example.com",
+     "websocketUrl": "$(terraform output -raw websocket_api_endpoint)"
+   }
+   EOF
+   aws s3 cp config.json s3://$BUCKET_NAME/
+   ```
+
+For detailed AWS deployment instructions, see **[terraform/README.md](terraform/README.md)**.
+
+### AWS vs Flask Deployment
+
+| Feature | Flask (Local) | AWS (Serverless) |
+|---------|---------------|------------------|
+| Setup Complexity | Low | Medium |
+| Scalability | Single server | Auto-scaling |
+| Availability | Single point of failure | High availability |
+| Cost (low traffic) | ~$5-10/month (VPS) | ~$1-5/month |
+| Cost (high traffic) | Fixed | Pay-per-use |
+| Maintenance | Manual updates | Managed services |
+| Geographic Distribution | Single region | Global (CloudFront) |
+
 ## Development
 
 ### Project Structure
@@ -443,12 +526,27 @@ The server will automatically detect and use gevent or eventlet if installed. No
 ```
 live-translate/
 ├── speech_to_text.go      # Go speech recognition client (recommended)
-├── server.py              # Flask web server
+├── server.py              # Flask web server (local deployment)
+├── lambda_handler.py      # AWS Lambda handler (cloud deployment)
+├── client_map.py          # Client connection management (shared)
+├── message_handler.py     # Message handling logic (shared)
 ├── Makefile               # Build system for Go client
 ├── go.mod                 # Go module dependencies
 ├── go.sum                 # Go module checksums
 ├── templates/
-│   └── index.html        # Web interface
+│   └── index.html        # Web interface (Flask template)
+├── static/
+│   ├── index.html        # Static web interface (AWS S3)
+│   ├── main.css          # Stylesheet
+│   └── config.json.example # Configuration template (AWS)
+├── terraform/             # AWS infrastructure as code
+│   ├── main.tf           # Terraform configuration
+│   ├── variables.tf      # Input variables
+│   ├── outputs.tf        # Output values
+│   ├── resources.tf      # AWS resources
+│   └── README.md         # AWS deployment guide
+├── scripts/
+│   └── build_lambda.sh   # Build Lambda deployment package
 ├── requirements.txt      # Python dependencies for server
 ├── .env.example          # Environment variables template
 ├── .gitignore            # Git ignore rules
