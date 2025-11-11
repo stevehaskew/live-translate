@@ -51,7 +51,7 @@ class TestLambdaHandler(unittest.TestCase):
         # Verify client was added to map
         client = self.lambda_handler.client_map.get_client("test-connection-123")
         self.assertIsNotNone(client)
-        self.assertEqual(client["language"], "en")
+        self.assertEqual(client["lang"], "en")
 
     def test_handle_disconnect(self):
         """Test handling WebSocket disconnect event."""
@@ -91,7 +91,7 @@ class TestLambdaHandler(unittest.TestCase):
                 "domainName": "test.execute-api.us-east-1.amazonaws.com",
                 "stage": "production",
             },
-            "body": json.dumps({"type": "set_language", "data": {"language": "es"}}),
+            "body": json.dumps({"type": "set_language", "data": {"lang": "es"}}),
         }
         context = {}
 
@@ -101,7 +101,7 @@ class TestLambdaHandler(unittest.TestCase):
 
         # Verify language was updated
         client = self.lambda_handler.client_map.get_client("test-connection-123")
-        self.assertEqual(client["language"], "es")
+        self.assertEqual(client["lang"], "es")
 
         # Verify messages were sent
         self.assertTrue(mock_apigw.post_to_connection.called)

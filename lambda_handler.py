@@ -42,8 +42,8 @@ except Exception as e:
 
     client_map = TranslationClientMap()
 
-# API Gateway Management API client (initialized per request)
-apigw_management_client = None
+# API Gateway Management API clients keyed by endpoint (one client per domain/stage)
+apigw_management_clients = {}
 
 
 def get_apigw_management_client(event: Dict[str, Any]):
@@ -56,21 +56,34 @@ def get_apigw_management_client(event: Dict[str, Any]):
     Returns:
         boto3 API Gateway Management API client
     """
-    global apigw_management_client
+    # Build endpoint from event
+    domain_name = event["requestContext"].get("domainName")
 
-    if apigw_management_client is None:
-        # Extract endpoint from event
-        domain_name = event["requestContext"]["domainName"]
-        stage = event["requestContext"]["stage"]
-        endpoint_url = f"https://{domain_name}/{stage}"
+    # endpoint_url should normally be https://{domain}/{stage}
+    # but some custom domain mappings or API types may require different forms.
+    endpoint_url = f"https://{domain_name}" if domain_name else None
 
-        apigw_management_client = boto3.client(
+    logger.debug(
+        f"Creating/getting apigatewaymanagementapi client for endpoint: {endpoint_url}"
+    )
+
+    if not endpoint_url:
+        raise RuntimeError(
+            "Unable to determine API Gateway Management endpoint from event"
+        )
+
+    # Cache clients per endpoint so lambdas that receive events for multiple stages/domains
+    # don't reuse a client configured for a different endpoint.
+    client = apigw_management_clients.get(endpoint_url)
+    if client is None:
+        client = boto3.client(
             "apigatewaymanagementapi",
             endpoint_url=endpoint_url,
             region_name=AWS_REGION,
         )
+        apigw_management_clients[endpoint_url] = client
 
-    return apigw_management_client
+    return client
 
 
 def send_message_to_connection(
@@ -202,7 +215,7 @@ def handle_message(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         if msg_type == message_handler.MESSAGE_TYPE_SET_LANGUAGE:
             # Handle language preference
-            language = msg_data.get("language", "en")
+            language = msg_data.get("lang", "en")
             response = message_handler.handle_set_language(
                 connection_id, language, client_map
             )

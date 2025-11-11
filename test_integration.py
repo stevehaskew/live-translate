@@ -52,13 +52,13 @@ class TestServerIntegration(unittest.TestCase):
         # Get the client
         client = self.client_map.get_client("test_client")
         self.assertIsNotNone(client)
-        self.assertEqual(client["language"], "es")
+        self.assertEqual(client["lang"], "es")
 
         # Update language
         result = self.client_map.update_language("test_client", "fr")
         self.assertTrue(result)
         client = self.client_map.get_client("test_client")
-        self.assertEqual(client["language"], "fr")
+        self.assertEqual(client["lang"], "fr")
 
         # Delete the client
         self.client_map.delete_client("test_client")
@@ -89,11 +89,11 @@ class TestServerIntegration(unittest.TestCase):
             "client1", "de", self.client_map
         )
         self.assertEqual(response["type"], "language_set")
-        self.assertEqual(response["data"]["language"], "de")
+        self.assertEqual(response["data"]["lang"], "de")
 
         # Verify the language was updated
         client = self.client_map.get_client("client1")
-        self.assertEqual(client["language"], "de")
+        self.assertEqual(client["lang"], "de")
 
         # Clean up
         self.client_map.delete_client("client1")

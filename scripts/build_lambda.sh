@@ -25,7 +25,7 @@ cp "$PROJECT_ROOT/message_handler.py" "$BUILD_DIR/"
 
 # Install Python dependencies
 echo "Installing Python dependencies..."
-pip install -q -t "$BUILD_DIR" boto3 botocore
+pip3 install -q -t "$BUILD_DIR" boto3 botocore
 
 # Create deployment package
 echo "Creating deployment package..."

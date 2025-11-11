@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sync"
 	"log"
+	"io"
 	"net/url"
 	"os"
 	"os/signal"
@@ -184,13 +185,38 @@ func (s *SpeechToText) connectToServer() error {
 	}
 
 	// Add /ws path for WebSocket endpoint
-	u.Path = "/ws"
+	// u.Path = "/ws"
 	wsURL := u.String()
 
 	// Connect to WebSocket
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
-		return fmt.Errorf("failed to connect to server: %v", err)
+		// Provide more verbose diagnostics when requested
+		if s.verbose {
+			fmt.Fprintf(os.Stderr, "\n✖ Failed to connect to server at %s\n", wsURL)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			// If the dial returned an HTTP response, include its status and a small preview of the body
+			if resp != nil {
+				// Try to read up to 4KB of the response body for diagnostics
+				var bodyPreview string
+				if resp.Body != nil {
+					limited := io.LimitReader(resp.Body, 4096)
+					if b, rerr := io.ReadAll(limited); rerr == nil {
+						bodyPreview = string(b)
+					} else {
+						bodyPreview = fmt.Sprintf("<failed to read body: %v>", rerr)
+					}
+					resp.Body.Close()
+				}
+
+				fmt.Fprintf(os.Stderr, "Response status: %s\n", resp.Status)
+				if bodyPreview != "" {
+					fmt.Fprintf(os.Stderr, "Response body (truncated to 4KB):\n%s\n", bodyPreview)
+				}
+			}
+		}
+
+		return fmt.Errorf("failed to connect to server %s: %v", wsURL, err)
 	}
 
 	s.wsConn = conn
@@ -517,7 +543,11 @@ func (s *SpeechToText) Run() error {
 	// Connect to server
 	if err := s.connectToServer(); err != nil {
 		fmt.Println("\n⚠ Warning: Could not connect to server.")
-		fmt.Println("Make sure the Flask server is running.")
+		// When verbose, show the underlying error and helpful troubleshooting hints
+		if s.verbose {
+			fmt.Fprintf(os.Stderr, "Connection error details: %v\n", err)
+		}
+
 		fmt.Print("Continue anyway? (y/n): ")
 
 		var response string

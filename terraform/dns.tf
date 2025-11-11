@@ -3,7 +3,10 @@
 
 # Data source to fetch the Route53 hosted zone
 data "aws_route53_zone" "main" {
-  name         = var.domain_name
+  # Look up the hosted zone for the parent domain (one level up).
+  # For example, if var.domain_name is "translate.example.com", set
+  # var.parent_domain = "example.com" so we find the hosted zone for example.com.
+  name         = var.parent_domain
   private_zone = false
 }
 

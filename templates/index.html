@@ -196,7 +196,7 @@
 
                     // Send initial language preference
                     const selectedLanguage = languageSelect.value;
-                    sendMessage(MessageType.SET_LANGUAGE, { language: selectedLanguage });
+                    sendMessage(MessageType.SET_LANGUAGE, { lang: selectedLanguage });
                 };
 
                 ws.onclose = function() {
@@ -251,7 +251,7 @@
                     break;
 
                 case MessageType.LANGUAGE_SET:
-                    console.log('Language preference confirmed:', message.data.language);
+                    console.log('Language preference confirmed:', message.data.lang);
                     break;
 
                 case MessageType.TRANSLATED_TEXT:
@@ -297,7 +297,7 @@
             messageDiv.appendChild(text);
 
             // Show original text if translated
-            if (data.language !== 'en' && data.original !== data.text && awsAvailable) {
+            if (data.lang !== 'en' && data.original !== data.text && awsAvailable) {
                 const original = document.createElement('div');
                 original.className = 'message-original';
                 original.textContent = `Original: ${data.original}`;
@@ -396,7 +396,7 @@
             } catch (err) {
                 console.warn('Could not save language preference:', err);
             }
-            sendMessage(MessageType.SET_LANGUAGE, { language: selectedLanguage });
+            sendMessage(MessageType.SET_LANGUAGE, { lang: selectedLanguage });
         });
 
         // Handle page visibility to reconnect if needed

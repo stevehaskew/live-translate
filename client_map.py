@@ -31,7 +31,7 @@ class TranslationClientMap:
             language: Preferred language code (default: "en")
             ws: WebSocket connection object
         """
-        self._clients[client_id] = {"language": language, "ws": ws}
+        self._clients[client_id] = {"lang": language, "ws": ws}
         logger.info(f"Client added: {client_id} (language: {language})")
 
     def delete_client(self, client_id: Any) -> None:
@@ -78,7 +78,7 @@ class TranslationClientMap:
             True if update was successful, False if client not found
         """
         if client_id in self._clients:
-            self._clients[client_id]["language"] = language
+            self._clients[client_id]["lang"] = language
             logger.info(f"Client {client_id} language updated to: {language}")
             return True
         return False
@@ -145,7 +145,7 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
             self.table.put_item(
                 Item={
                     "client_id": str(client_id),
-                    "language": language,
+                    "lang": language,
                 }
             )
         except ClientError as e:
@@ -153,7 +153,7 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
             raise
 
         # Also keep in local cache for WebSocket reference
-        self._clients[client_id] = {"language": language, "ws": ws}
+        self._clients[client_id] = {"lang": language, "ws": ws}
         logger.info(f"Client added to DynamoDB: {client_id} (language: {language})")
 
     def delete_client(self, client_id: Any) -> None:
@@ -193,7 +193,7 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
             response = self.table.get_item(Key={"client_id": str(client_id)})
             if "Item" in response:
                 return {
-                    "language": response["Item"].get("language", "en"),
+                    "lang": response["Item"].get("lang", "en"),
                     "ws": None,
                 }
         except ClientError as e:
@@ -216,7 +216,7 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
         try:
             self.table.update_item(
                 Key={"client_id": str(client_id)},
-                UpdateExpression="SET language = :lang",
+                UpdateExpression="SET lang = :lang",
                 ExpressionAttributeValues={":lang": language},
             )
         except ClientError as e:
@@ -225,7 +225,7 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
 
         # Also update local cache if present
         if client_id in self._clients:
-            self._clients[client_id]["language"] = language
+            self._clients[client_id]["lang"] = language
 
         logger.info(f"Client {client_id} language updated in DynamoDB to: {language}")
         return True

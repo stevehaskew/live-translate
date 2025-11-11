@@ -9,6 +9,11 @@ aws_region = "us-east-1"
 # Terraform will create ACM certificates and DNS records automatically
 domain_name = "translate.example.com"
 
+# Parent hosted zone (one level up). This is the Route53 hosted zone name
+# that contains the record for the site. For example, if domain_name is
+# "translate.example.com" then parent_domain should be "example.com".
+parent_domain = "example.com"
+
 # API domain name (optional - defaults to "api.{domain_name}")
 # If not specified, will use api.translate.example.com
 # api_domain_name = "api.translate.example.com"

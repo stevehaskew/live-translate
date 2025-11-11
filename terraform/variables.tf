@@ -9,6 +9,11 @@ variable "domain_name" {
   type        = string
 }
 
+variable "parent_domain" {
+  description = "Parent (hosted zone) domain name one level up from domain_name (e.g., example.com)"
+  type        = string
+}
+
 variable "api_domain_name" {
   description = "Domain name for the API Gateway WebSocket endpoint. If not provided, defaults to 'api.' prefix on domain_name"
   type        = string

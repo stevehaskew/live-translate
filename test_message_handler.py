@@ -132,7 +132,7 @@ class TestMessageHandler(unittest.TestCase):
         response = self.handler.handle_set_language("client1", "es", mock_client_map)
 
         self.assertEqual(response["type"], self.handler.MESSAGE_TYPE_LANGUAGE_SET)
-        self.assertEqual(response["data"]["language"], "es")
+        self.assertEqual(response["data"]["lang"], "es")
         mock_client_map.update_language.assert_called_once_with("client1", "es")
 
     def test_handle_set_language_failure(self):
@@ -160,8 +160,8 @@ class TestMessageHandler(unittest.TestCase):
         """Test handling new text with valid API key."""
         mock_client_map = Mock()
         mock_client_map.get_all_clients.return_value = {
-            "client1": {"language": "en", "ws": Mock()},
-            "client2": {"language": "es", "ws": Mock()},
+            "client1": {"lang": "en", "ws": Mock()},
+            "client2": {"lang": "es", "ws": Mock()},
         }
         self.mock_translation_service.translate_text.return_value = "Hola"
 
@@ -186,7 +186,7 @@ class TestMessageHandler(unittest.TestCase):
         self.assertEqual(response["type"], self.handler.MESSAGE_TYPE_TRANSLATION_RESULT)
         self.assertEqual(response["data"]["original"], "Hello world")
         self.assertEqual(response["data"]["translated"], "Bonjour monde")
-        self.assertEqual(response["data"]["language"], "fr")
+        self.assertEqual(response["data"]["lang"], "fr")
         self.mock_translation_service.translate_text.assert_called_once_with(
             "Hello world", "fr"
         )

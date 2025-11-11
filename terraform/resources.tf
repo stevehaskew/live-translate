@@ -190,6 +190,17 @@ resource "aws_iam_role_policy" "lambda_execution" {
       {
         Effect = "Allow"
         Action = [
+          "execute-api:Invoke"
+        ]
+        # Allow invoking the PostToConnection management endpoint for any connection id on any stage
+        Resource = [
+          "arn:aws:execute-api:${var.aws_region}:*:${aws_apigatewayv2_api.websocket.id}/*/POST/@connections/*",
+          "arn:aws:execute-api:${var.aws_region}:*:${aws_apigatewayv2_api.websocket.id}/*/POST/*/@connections/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "translate:TranslateText",
           "comprehend:DetectDominantLanguage"
         ]
@@ -213,7 +224,6 @@ resource "aws_lambda_function" "websocket_handler" {
   environment {
     variables = {
       DYNAMODB_TABLE_NAME = aws_dynamodb_table.connections.name
-      AWS_REGION          = var.aws_region
       API_KEY             = var.api_key
     }
   }
