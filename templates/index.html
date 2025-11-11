@@ -102,6 +102,8 @@
 
         // Settings panel collapse/expand functionality
         const SETTINGS_STORAGE_KEY = 'liveTranslateSettingsCollapsed';
+        // Language preference persistence
+        const LANGUAGE_STORAGE_KEY = 'liveTranslateLanguage';
         
         // Check if user has visited before
         function hasVisitedBefore() {
@@ -135,6 +137,25 @@
 
         // Load initial state
         loadSettingsState();
+
+        // Load saved language preference (if present)
+        function loadLanguagePreference() {
+            try {
+                const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+                if (saved && languageSelect) {
+                    // Only set if the option exists in the select
+                    const optionExists = Array.from(languageSelect.options).some(o => o.value === saved);
+                    if (optionExists) {
+                        languageSelect.value = saved;
+                    }
+                }
+            } catch (err) {
+                // localStorage might be unavailable in some environments; ignore silently
+                console.warn('Could not load saved language preference:', err);
+            }
+        }
+
+        loadLanguagePreference();
 
         // Initialize Socket.IO connection
         try {
@@ -246,6 +267,11 @@
         languageSelect.addEventListener('change', (event) => {
             const selectedLanguage = event.target.value;
             console.log('Language changed to:', selectedLanguage);
+            try {
+                localStorage.setItem(LANGUAGE_STORAGE_KEY, selectedLanguage);
+            } catch (err) {
+                console.warn('Could not save language preference:', err);
+            }
             if (socket) {
                 socket.emit('set_language', { language: selectedLanguage });
             }
