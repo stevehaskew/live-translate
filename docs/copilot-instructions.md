@@ -144,7 +144,7 @@ python -m unittest test_api_auth
 
 ### Adding New Tests
 
-1. Create test file with `test_` prefix
+1. Create test file with `test_` prefix in the `tests/` directory
 2. Inherit from `unittest.TestCase`
 3. Mock external dependencies (boto3)
 4. Test both success and failure scenarios
@@ -194,13 +194,16 @@ python -m unittest test_api_auth
 ```
 live-translate/
 ├── .github/
-│   ├── copilot-instructions.md  # This file
 │   └── workflows/               # CI/CD workflows
+├── docs/
+│   ├── copilot-instructions.md  # This file
+│   └── AWS_DEPLOYMENT.md        # AWS deployment guide
 ├── templates/
 │   └── index.html              # Web interface
 ├── static/                     # Static assets (if any)
+├── tests/                      # Unit tests
+│   └── test_*.py               # Test files
 ├── server.py                   # Flask server with WebSocket
-├── test_*.py                   # Unit tests
 ├── requirements.txt            # Python dependencies
 ├── .env.example                # Environment template
 └── README.md                   # User documentation
