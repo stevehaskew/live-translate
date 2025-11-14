@@ -20,6 +20,7 @@ mkdir -p "$BUILD_DIR"
 # Copy Lambda handler and dependencies
 echo "Copying Python files..."
 cp "$PROJECT_ROOT/lambda_handler.py" "$BUILD_DIR/"
+cp "$PROJECT_ROOT/lambda_authorizer.py" "$BUILD_DIR/"
 cp "$PROJECT_ROOT/client_map.py" "$BUILD_DIR/"
 cp "$PROJECT_ROOT/message_handler.py" "$BUILD_DIR/"
 
