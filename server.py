@@ -7,7 +7,8 @@ Receives text from speech-to-text app and broadcasts translations to web clients
 import os
 import json
 import logging
-from flask import Flask, send_from_directory, jsonify
+import secrets
+from flask import Flask, send_from_directory, jsonify, request
 from flask_sock import Sock
 from dotenv import load_dotenv
 
@@ -120,8 +121,20 @@ def health():
 def websocket_handler(ws):
     """Handle WebSocket connections."""
     client_id = id(ws)
-    client_map.add_client(client_id, language="en", ws=ws)
-    logger.info(f"Client connected: {client_id} (Total: {client_map.count()})")
+    
+    # Check for API key in headers to determine if this is an authorized sender
+    # Flask-Sock doesn't provide direct access to headers, so we use Flask's request
+    api_key_header = request.headers.get("X-API-Key")
+    is_authorized_sender = False
+    
+    if api_key_header and API_KEY:
+        # Validate the API key using constant-time comparison
+        if secrets.compare_digest(api_key_header, API_KEY):
+            is_authorized_sender = True
+            logger.info(f"Client {client_id} authenticated with API key")
+    
+    client_map.add_client(client_id, language="en", ws=ws, is_authorized_sender=is_authorized_sender)
+    logger.info(f"Client connected: {client_id} (Total: {client_map.count()}, authorized_sender: {is_authorized_sender})")
 
     # Send connection status
     try:
@@ -151,17 +164,26 @@ def websocket_handler(ws):
 
                 elif msg_type == MESSAGE_TYPE_NEW_TEXT:
                     # Handle new text from speech-to-text application
+                    # Check if this connection is authorized to send new_text
+                    client_info = client_map.get_client(client_id)
+                    if not client_info or not client_info.get("is_authorized_sender", False):
+                        logger.warning(f"Unauthorized new_text attempt from {client_id}")
+                        error_msg = message_handler.create_error_message(
+                            "Unauthorized: Only authenticated clients can send text"
+                        )
+                        send_message(ws, error_msg["type"], error_msg["data"])
+                        continue
+                    
                     original_text = msg_data.get("text", "")
                     timestamp = msg_data.get("timestamp", "")
-                    provided_key = msg_data.get("api_key", "")
 
                     result = message_handler.handle_new_text(
-                        original_text, timestamp, provided_key, client_map
+                        original_text, timestamp, client_map
                     )
 
                     if result["status"] == "error":
                         logger.warning(
-                            f"Unauthorized new_text attempt from {client_id}"
+                            f"Error processing new_text from {client_id}"
                         )
                         error_msg = message_handler.create_error_message(
                             result["error"]

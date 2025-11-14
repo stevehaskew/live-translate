@@ -159,7 +159,6 @@ class MessageHandler:
         self,
         text: str,
         timestamp: str,
-        api_key: str,
         client_map: Any,
     ) -> Dict[str, Any]:
         """
@@ -168,20 +167,13 @@ class MessageHandler:
         Args:
             text: Original text to translate
             timestamp: Timestamp of the text
-            api_key: Provided API key for authentication
             client_map: Client map instance
 
         Returns:
             Result dictionary with status and translations or error
         """
-        # Validate API key if configured
-        if not self.validate_api_key(api_key):
-            logger.warning("Unauthorized new_text attempt")
-            return {
-                "status": "error",
-                "error": "Unauthorized: Invalid API key",
-                "type": self.MESSAGE_TYPE_ERROR,
-            }
+        # Authorization is now handled at API Gateway level via Lambda authorizer
+        # This function assumes the caller has already validated authorization
 
         logger.info(f"New text received: {text}")
 

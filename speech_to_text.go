@@ -191,8 +191,14 @@ func (s *SpeechToText) connectToServer() error {
 	// u.Path = "/ws"
 	wsURL := u.String()
 
-	// Connect to WebSocket
-	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	// Prepare headers with API key if available
+	headers := make(map[string][]string)
+	if s.apiKey != "" {
+		headers["X-API-Key"] = []string{s.apiKey}
+	}
+
+	// Connect to WebSocket with headers
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURL, headers)
 	if err != nil {
 		// Provide more verbose diagnostics when requested
 		if s.verbose {
@@ -472,9 +478,7 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 										"text":      transcript,
 										"timestamp": timestamp,
 									}
-									if s.apiKey != "" {
-										data["api_key"] = s.apiKey
-									}
+									// API key is now sent as header during connection, not in message payload
 									// Send WebSocket message
 									if err := s.sendMessage(MessageTypeNewText, data); err != nil {
 										log.Printf("Failed to send message: %v", err)

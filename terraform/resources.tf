@@ -210,6 +210,36 @@ resource "aws_iam_role_policy" "lambda_execution" {
   })
 }
 
+# Lambda function for authorizer
+resource "aws_lambda_function" "websocket_authorizer" {
+  filename         = var.lambda_zip_path
+  function_name    = "${var.project_name}-websocket-authorizer-${var.environment}"
+  role             = aws_iam_role.lambda_execution.arn
+  handler          = "lambda_authorizer.lambda_handler"
+  source_code_hash = filebase64sha256(var.lambda_zip_path)
+  runtime          = "python3.12"
+  timeout          = 10
+  memory_size      = 128
+
+  environment {
+    variables = {
+      API_KEY = var.api_key
+    }
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-websocket-authorizer-${var.environment}"
+  })
+}
+
+# CloudWatch Log Group for Authorizer Lambda
+resource "aws_cloudwatch_log_group" "lambda_authorizer" {
+  name              = "/aws/lambda/${aws_lambda_function.websocket_authorizer.function_name}"
+  retention_in_days = 7
+
+  tags = local.common_tags
+}
+
 # Lambda function
 resource "aws_lambda_function" "websocket_handler" {
   filename         = var.lambda_zip_path
@@ -261,6 +291,24 @@ resource "aws_lambda_permission" "api_gateway" {
   source_arn    = "${aws_apigatewayv2_api.websocket.execution_arn}/*"
 }
 
+# Lambda permission for authorizer
+resource "aws_lambda_permission" "api_gateway_authorizer" {
+  statement_id  = "AllowAPIGatewayAuthorizerInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.websocket_authorizer.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.websocket.execution_arn}/authorizers/*"
+}
+
+# API Gateway Authorizer
+resource "aws_apigatewayv2_authorizer" "websocket" {
+  api_id           = aws_apigatewayv2_api.websocket.id
+  authorizer_type  = "REQUEST"
+  authorizer_uri   = aws_lambda_function.websocket_authorizer.invoke_arn
+  identity_sources = ["route.request.header.X-API-Key"]
+  name             = "${var.project_name}-authorizer-${var.environment}"
+}
+
 # API Gateway Integration
 resource "aws_apigatewayv2_integration" "lambda" {
   api_id           = aws_apigatewayv2_api.websocket.id
@@ -270,9 +318,11 @@ resource "aws_apigatewayv2_integration" "lambda" {
 
 # API Gateway Routes
 resource "aws_apigatewayv2_route" "connect" {
-  api_id    = aws_apigatewayv2_api.websocket.id
-  route_key = "$connect"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  api_id             = aws_apigatewayv2_api.websocket.id
+  route_key          = "$connect"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.websocket.id
+  authorization_type = "CUSTOM"
 }
 
 resource "aws_apigatewayv2_route" "disconnect" {

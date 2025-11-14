@@ -22,7 +22,7 @@ class TranslationClientMap:
         """Initialize the client map with an empty dictionary."""
         self._clients: Dict[Any, Dict[str, Any]] = {}
 
-    def add_client(self, client_id: Any, language: str = "en", ws: Any = None) -> None:
+    def add_client(self, client_id: Any, language: str = "en", ws: Any = None, is_authorized_sender: bool = False) -> None:
         """
         Add or update a client in the map.
 
@@ -30,9 +30,14 @@ class TranslationClientMap:
             client_id: Unique identifier for the client
             language: Preferred language code (default: "en")
             ws: WebSocket connection object
+            is_authorized_sender: Whether client is authorized to send new_text (default: False)
         """
-        self._clients[client_id] = {"lang": language, "ws": ws}
-        logger.info(f"Client added: {client_id} (language: {language})")
+        self._clients[client_id] = {
+            "lang": language, 
+            "ws": ws,
+            "is_authorized_sender": is_authorized_sender
+        }
+        logger.info(f"Client added: {client_id} (language: {language}, authorized_sender: {is_authorized_sender})")
 
     def delete_client(self, client_id: Any) -> None:
         """
@@ -131,7 +136,7 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
             logger.error(f"Failed to initialize DynamoDB client map: {e}")
             raise
 
-    def add_client(self, client_id: Any, language: str = "en", ws: Any = None) -> None:
+    def add_client(self, client_id: Any, language: str = "en", ws: Any = None, is_authorized_sender: bool = False) -> None:
         """
         Add or update a client in DynamoDB and local cache.
 
@@ -139,6 +144,7 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
             client_id: Unique identifier for the client
             language: Preferred language code (default: "en")
             ws: WebSocket connection object (stored only in local cache)
+            is_authorized_sender: Whether client is authorized to send new_text (default: False)
         """
         # Store in DynamoDB
         try:
@@ -146,6 +152,7 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
                 Item={
                     "client_id": str(client_id),
                     "lang": language,
+                    "is_authorized_sender": is_authorized_sender,
                 }
             )
         except ClientError as e:
@@ -153,8 +160,12 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
             raise
 
         # Also keep in local cache for WebSocket reference
-        self._clients[client_id] = {"lang": language, "ws": ws}
-        logger.info(f"Client added to DynamoDB: {client_id} (language: {language})")
+        self._clients[client_id] = {
+            "lang": language, 
+            "ws": ws,
+            "is_authorized_sender": is_authorized_sender
+        }
+        logger.info(f"Client added to DynamoDB: {client_id} (language: {language}, authorized_sender: {is_authorized_sender})")
 
     def delete_client(self, client_id: Any) -> None:
         """
@@ -195,6 +206,7 @@ class TranslationClientMapDynamoDB(TranslationClientMap):
                 return {
                     "lang": response["Item"].get("lang", "en"),
                     "ws": None,
+                    "is_authorized_sender": response["Item"].get("is_authorized_sender", False),
                 }
         except ClientError as e:
             logger.error(f"DynamoDB error getting client {client_id}: {e}")

@@ -157,9 +157,18 @@ def handle_connect(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     connection_id = event["requestContext"]["connectionId"]
 
     try:
-        # Add client with default language
-        client_map.add_client(connection_id, language="en", ws=None)
-        logger.info(f"Client connected: {connection_id}")
+        # Check if connection is authorized to send new_text (from authorizer context)
+        authorizer_context = event["requestContext"].get("authorizer", {})
+        is_authorized_sender = authorizer_context.get("isAuthorizedSender") == "true"
+        
+        # Add client with default language and authorization status
+        client_map.add_client(
+            connection_id, 
+            language="en", 
+            ws=None,
+            is_authorized_sender=is_authorized_sender
+        )
+        logger.info(f"Client connected: {connection_id}, authorized_sender={is_authorized_sender}")
 
         return {"statusCode": 200, "body": "Connected"}
     except Exception as e:
@@ -223,19 +232,28 @@ def handle_message(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         elif msg_type == message_handler.MESSAGE_TYPE_NEW_TEXT:
             # Handle new text from speech-to-text application
+            # Check if this connection is authorized to send new_text
+            client_info = client_map.get_client(connection_id)
+            if not client_info or not client_info.get("is_authorized_sender", False):
+                logger.warning(f"Unauthorized new_text attempt from {connection_id}")
+                error_msg = message_handler.create_error_message(
+                    "Unauthorized: Only authenticated clients can send text"
+                )
+                send_message_to_connection(connection_id, error_msg, apigw_client)
+                return {"statusCode": 401, "body": "Unauthorized"}
+            
             original_text = msg_data.get("text", "")
             timestamp = msg_data.get("timestamp", "")
-            provided_key = msg_data.get("api_key", "")
 
             result = message_handler.handle_new_text(
-                original_text, timestamp, provided_key, client_map
+                original_text, timestamp, client_map
             )
 
             if result["status"] == "error":
-                logger.warning(f"Unauthorized new_text attempt from {connection_id}")
+                logger.warning(f"Error processing new_text from {connection_id}")
                 error_msg = message_handler.create_error_message(result["error"])
                 send_message_to_connection(connection_id, error_msg, apigw_client)
-                return {"statusCode": 401, "body": "Unauthorized"}
+                return {"statusCode": 500, "body": "Internal server error"}
 
             # Broadcast translations to all clients
             for translation_info in result["translations"]:
