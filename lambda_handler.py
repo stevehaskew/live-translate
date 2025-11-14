@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError
 # Import our existing modules
 from client_map import TranslationClientMapDynamoDB
 from message_handler import MessageHandler, TranslationService
+from token_generator import TokenGenerator
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ API_KEY = os.environ.get("API_KEY")
 # Initialize services
 translation_service = TranslationService(region_name=AWS_REGION)
 message_handler = MessageHandler(translation_service, API_KEY)
+
+# Initialize token generator for AWS Transcribe credentials
+token_generator = TokenGenerator(region_name=AWS_REGION)
 
 # Initialize client map with DynamoDB
 try:
@@ -280,10 +284,64 @@ def handle_message(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         return {"statusCode": 500, "body": "Internal server error"}
 
 
+def handle_http_generate_token(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+    """
+    Handle HTTP POST request to /generate_token endpoint.
+    Requires API key authentication via Authorization header.
+
+    Args:
+        event: Lambda event from API Gateway
+        context: Lambda context
+
+    Returns:
+        API Gateway HTTP response
+    """
+    # Check Authorization header
+    headers = event.get("headers", {})
+    auth_header = headers.get("Authorization") or headers.get("authorization")
+    
+    if not auth_header or not auth_header.startswith("Bearer "):
+        logger.warning("Token generation attempted without valid Authorization header")
+        return {
+            "statusCode": 401,
+            "body": json.dumps({"error": "Unauthorized: Missing or invalid Authorization header"}),
+            "headers": {"Content-Type": "application/json"},
+        }
+    
+    provided_key = auth_header[7:]  # Remove "Bearer " prefix
+    
+    # Validate API key
+    if not message_handler.validate_api_key(provided_key):
+        logger.warning("Token generation attempted with invalid API key")
+        return {
+            "statusCode": 401,
+            "body": json.dumps({"error": "Unauthorized: Invalid API key"}),
+            "headers": {"Content-Type": "application/json"},
+        }
+    
+    # Generate token
+    result = token_generator.generate_token()
+    
+    if result["status"] == "error":
+        logger.error(f"Token generation failed: {result.get('error')}")
+        return {
+            "statusCode": 500,
+            "body": json.dumps({"error": result.get("error")}),
+            "headers": {"Content-Type": "application/json"},
+        }
+    
+    logger.info("Token generated successfully")
+    return {
+        "statusCode": 200,
+        "body": json.dumps(result),
+        "headers": {"Content-Type": "application/json"},
+    }
+
+
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     """
-    Main Lambda handler for API Gateway WebSocket events.
-    Routes to appropriate handler based on route key.
+    Main Lambda handler for API Gateway WebSocket and HTTP events.
+    Routes to appropriate handler based on request type.
 
     Args:
         event: Lambda event from API Gateway
@@ -292,7 +350,25 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Returns:
         API Gateway response
     """
-    route_key = event["requestContext"]["routeKey"]
+    # Check if this is a WebSocket or HTTP request
+    request_context = event.get("requestContext", {})
+    
+    # HTTP request (generate_token endpoint)
+    if "http" in request_context or "routeKey" not in request_context:
+        http_method = request_context.get("http", {}).get("method") or event.get("httpMethod")
+        path = request_context.get("http", {}).get("path") or event.get("path")
+        
+        if path == "/generate_token" and http_method == "POST":
+            return handle_http_generate_token(event, context)
+        else:
+            return {
+                "statusCode": 404,
+                "body": json.dumps({"error": "Not found"}),
+                "headers": {"Content-Type": "application/json"},
+            }
+    
+    # WebSocket request
+    route_key = request_context.get("routeKey")
 
     logger.info(f"Processing route: {route_key}")
 

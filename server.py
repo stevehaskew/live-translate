@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 # Import our refactored modules
 from client_map import TranslationClientMap
 from message_handler import MessageHandler, TranslationService
+from token_generator import TokenGenerator
 
 # Load environment variables
 load_dotenv()
@@ -45,6 +46,11 @@ aws_available = translation_service.is_available()
 
 # Initialize message handler
 message_handler = MessageHandler(translation_service, API_KEY)
+
+# Initialize token generator for AWS Transcribe credentials
+token_generator = TokenGenerator(
+    region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+)
 
 # Initialize client map
 client_map = TranslationClientMap()
@@ -114,6 +120,38 @@ def health():
         "aws_translate": aws_available,
         "connected_clients": client_map.count(),
     }
+
+
+@app.route("/generate_token", methods=["POST"])
+def generate_token():
+    """
+    Generate temporary AWS credentials for Transcribe access.
+    Requires API key authentication via Authorization header.
+    """
+    from flask import request
+    
+    # Check API key authentication
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        logger.warning("Token generation attempted without valid Authorization header")
+        return jsonify({"error": "Unauthorized: Missing or invalid Authorization header"}), 401
+    
+    provided_key = auth_header[7:]  # Remove "Bearer " prefix
+    
+    # Validate API key using message_handler's validation
+    if not message_handler.validate_api_key(provided_key):
+        logger.warning("Token generation attempted with invalid API key")
+        return jsonify({"error": "Unauthorized: Invalid API key"}), 401
+    
+    # Generate token
+    result = token_generator.generate_token()
+    
+    if result["status"] == "error":
+        logger.error(f"Token generation failed: {result.get('error')}")
+        return jsonify({"error": result.get("error")}), 500
+    
+    logger.info("Token generated successfully")
+    return jsonify(result)
 
 
 @sock.route("/ws")
