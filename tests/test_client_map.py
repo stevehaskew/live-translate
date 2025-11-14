@@ -145,7 +145,7 @@ class TestTranslationClientMapDynamoDB(unittest.TestCase):
 
         # Verify DynamoDB put_item was called
         self.mock_table.put_item.assert_called_once_with(
-            Item={"client_id": "client1", "lang": "es"}
+            Item={"client_id": "client1", "lang": "es", "is_authorized_sender": False}
         )
 
         # Verify local cache was updated
@@ -153,6 +153,23 @@ class TestTranslationClientMapDynamoDB(unittest.TestCase):
         self.assertIsNotNone(client)
         self.assertEqual(client["lang"], "es")
         self.assertEqual(client["ws"], ws_mock)
+        self.assertFalse(client.get("is_authorized_sender", False))
+
+    def test_add_client_with_authorization(self):
+        """Test adding a client with authorization to DynamoDB."""
+        ws_mock = Mock()
+        self.client_map.add_client("client2", "en", ws_mock, is_authorized_sender=True)
+
+        # Verify DynamoDB put_item was called with authorization
+        self.mock_table.put_item.assert_called_once_with(
+            Item={"client_id": "client2", "lang": "en", "is_authorized_sender": True}
+        )
+
+        # Verify local cache was updated
+        client = self.client_map.get_client("client2")
+        self.assertIsNotNone(client)
+        self.assertEqual(client["lang"], "en")
+        self.assertTrue(client.get("is_authorized_sender", False))
 
     def test_delete_client(self):
         """Test deleting a client from DynamoDB."""

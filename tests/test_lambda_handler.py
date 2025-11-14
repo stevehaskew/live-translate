@@ -34,11 +34,12 @@ class TestLambdaHandler(unittest.TestCase):
         self.lambda_handler.client_map = TranslationClientMap()
 
     def test_handle_connect(self):
-        """Test handling WebSocket connect event."""
+        """Test handling WebSocket connect event without authorization."""
         event = {
             "requestContext": {
                 "connectionId": "test-connection-123",
                 "routeKey": "$connect",
+                "authorizer": {},
             }
         }
         context = {}
@@ -52,6 +53,31 @@ class TestLambdaHandler(unittest.TestCase):
         client = self.lambda_handler.client_map.get_client("test-connection-123")
         self.assertIsNotNone(client)
         self.assertEqual(client["lang"], "en")
+        self.assertFalse(client.get("is_authorized_sender", False))
+
+    def test_handle_connect_with_authorization(self):
+        """Test handling WebSocket connect event with authorization."""
+        event = {
+            "requestContext": {
+                "connectionId": "test-connection-456",
+                "routeKey": "$connect",
+                "authorizer": {
+                    "isAuthorizedSender": "true"
+                },
+            }
+        }
+        context = {}
+
+        response = self.lambda_handler.handle_connect(event, context)
+
+        self.assertEqual(response["statusCode"], 200)
+        self.assertEqual(response["body"], "Connected")
+
+        # Verify client was added to map with authorization
+        client = self.lambda_handler.client_map.get_client("test-connection-456")
+        self.assertIsNotNone(client)
+        self.assertEqual(client["lang"], "en")
+        self.assertTrue(client.get("is_authorized_sender", False))
 
     def test_handle_disconnect(self):
         """Test handling WebSocket disconnect event."""
@@ -108,7 +134,10 @@ class TestLambdaHandler(unittest.TestCase):
 
     @patch("lambda_handler.get_apigw_management_client")
     def test_handle_message_new_text_unauthorized(self, mock_get_client):
-        """Test handling new_text message with invalid API key."""
+        """Test handling new_text message from unauthorized connection."""
+        # Add a client without authorization
+        self.lambda_handler.client_map.add_client("test-connection-123", language="en", is_authorized_sender=False)
+        
         mock_apigw = MagicMock()
         mock_get_client.return_value = mock_apigw
 
@@ -125,7 +154,6 @@ class TestLambdaHandler(unittest.TestCase):
                     "data": {
                         "text": "Hello world",
                         "timestamp": "12:00:00",
-                        "api_key": "wrong-key",
                     },
                 }
             ),
@@ -139,16 +167,18 @@ class TestLambdaHandler(unittest.TestCase):
 
     @patch("lambda_handler.get_apigw_management_client")
     def test_handle_message_new_text_authorized(self, mock_get_client):
-        """Test handling new_text message with valid API key."""
-        # Add a client
-        self.lambda_handler.client_map.add_client("test-connection-123", language="en")
-
+        """Test handling new_text message from authorized connection."""
+        # Add a client with authorization (this is the sender)
+        self.lambda_handler.client_map.add_client("test-connection-sender", language="en", is_authorized_sender=True)
+        # Add a recipient client
+        self.lambda_handler.client_map.add_client("test-connection-recipient", language="en", is_authorized_sender=False)
+        
         mock_apigw = MagicMock()
         mock_get_client.return_value = mock_apigw
 
         event = {
             "requestContext": {
-                "connectionId": "test-connection-456",
+                "connectionId": "test-connection-sender",
                 "routeKey": "$default",
                 "domainName": "test.execute-api.us-east-1.amazonaws.com",
                 "stage": "production",
@@ -159,7 +189,6 @@ class TestLambdaHandler(unittest.TestCase):
                     "data": {
                         "text": "Hello world",
                         "timestamp": "12:00:00",
-                        "api_key": "test-api-key-123",
                     },
                 }
             ),
@@ -175,9 +204,9 @@ class TestLambdaHandler(unittest.TestCase):
         calls = mock_apigw.post_to_connection.call_args_list
         self.assertTrue(len(calls) > 0)
 
-        # Check that the message was sent to the right connection
+        # Check that the message was sent to the recipient
         sent_to_connections = [call[1]["ConnectionId"] for call in calls]
-        self.assertIn("test-connection-123", sent_to_connections)
+        self.assertIn("test-connection-recipient", sent_to_connections)
 
     def test_lambda_handler_connect_route(self):
         """Test main lambda_handler with $connect route."""

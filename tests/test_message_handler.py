@@ -146,18 +146,23 @@ class TestMessageHandler(unittest.TestCase):
         self.assertIn("Failed", response["data"]["message"])
 
     def test_handle_new_text_unauthorized(self):
-        """Test handling new text with invalid API key."""
+        """Test that authorization is now handled at API Gateway/connection level, not in handle_new_text."""
+        # This test is no longer relevant as authorization is handled at connection time
+        # handle_new_text now assumes the caller has already validated authorization
         mock_client_map = Mock()
+        mock_client_map.get_all_clients.return_value = {
+            "client1": {"lang": "en", "ws": Mock()},
+        }
 
         result = self.handler.handle_new_text(
-            "Hello", "2024-01-01", "wrong-key", mock_client_map
+            "Hello", "2024-01-01", mock_client_map
         )
 
-        self.assertEqual(result["status"], "error")
-        self.assertIn("Unauthorized", result["error"])
+        # Should succeed because authorization is assumed to be done before calling this
+        self.assertEqual(result["status"], "success")
 
     def test_handle_new_text_success(self):
-        """Test handling new text with valid API key."""
+        """Test handling new text (authorization is now handled at API Gateway level)."""
         mock_client_map = Mock()
         mock_client_map.get_all_clients.return_value = {
             "client1": {"lang": "en", "ws": Mock()},
@@ -166,7 +171,7 @@ class TestMessageHandler(unittest.TestCase):
         self.mock_translation_service.translate_text.return_value = "Hola"
 
         result = self.handler.handle_new_text(
-            "Hello", "2024-01-01", "test-api-key-12345", mock_client_map
+            "Hello", "2024-01-01", mock_client_map
         )
 
         self.assertEqual(result["status"], "success")
