@@ -26,8 +26,19 @@ build-windows:
 	GOOS=windows GOARCH=amd64 go build -o speech_to_text_go-windows-amd64.exe speech_to_text.go
 	@echo "Build complete: ./speech_to_text_go-windows-amd64.exe"
 
+lambda:
+	./scripts/build_lambda.sh
+
+frontend:
+	./scripts/build_frontend.sh
+
+terraform:
+	cd terraform && terraform apply -auto-approve
+
 # Build for all platforms
 build-all: build-linux build-darwin build-windows
+
+local: build lambda terraform frontend
 
 # Install Go dependencies
 install-deps:
