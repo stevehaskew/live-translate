@@ -19,6 +19,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming"
 	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming/types"
 	"github.com/gordonklaus/portaudio"
@@ -34,6 +35,8 @@ const (
 	MessageTypeLanguageSet      = "language_set"
 	MessageTypeNewText          = "new_text"
 	MessageTypeTranslatedText   = "translated_text"
+	MessageTypeGenerateToken    = "generate_token"
+	MessageTypeTokenResponse    = "token_response"
 	MessageTypeError            = "error"
 )
 
@@ -43,11 +46,28 @@ type WSMessage struct {
 	Data map[string]interface{} `json:"data"`
 }
 
+// TokenResponse represents the response from the generate_token endpoint
+type TokenResponse struct {
+	Status      string            `json:"status"`
+	Credentials AWSCredentials    `json:"credentials"`
+	Region      string            `json:"region"`
+	Error       string            `json:"error,omitempty"`
+}
+
+// AWSCredentials represents temporary AWS credentials
+type AWSCredentials struct {
+	AccessKeyId     string `json:"AccessKeyId"`
+	SecretAccessKey string `json:"SecretAccessKey"`
+	SessionToken    string `json:"SessionToken"`
+	Expiration      string `json:"Expiration"`
+}
+
 const (
 	sampleRate      = 16000
 	framesPerBuffer = 8000 // 0.5 seconds of audio
 	numChannels     = 1
 	phraseTimeLimit = 10 * time.Second
+	tokenRefreshInterval = 20 * time.Minute // Refresh token every 20 minutes
 )
 
 // AudioDevice represents an audio input device
@@ -69,6 +89,11 @@ type SpeechToText struct {
 	ctx               context.Context
 	awsRegion         string
 	verbose           bool
+	useLocalToken     bool // Use local AWS credentials instead of server token
+	currentToken      *TokenResponse
+	tokenMutex        sync.RWMutex
+	tokenResponseChan chan *TokenResponse
+	tokenErrorChan    chan error
 	// connectedOnce is set to true once the socket has successfully connected
 	connectedOnce     bool
 	connMu            sync.RWMutex
@@ -77,16 +102,17 @@ type SpeechToText struct {
 }
 
 // NewSpeechToText creates a new SpeechToText instance
-func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex int, awsRegion string, verbose bool) (*SpeechToText, error) {
+func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex int, awsRegion string, verbose bool, useLocalToken bool) (*SpeechToText, error) {
 	return &SpeechToText{
-		ctx:         ctx,
-		serverURL:   serverURL,
-		apiKey:      apiKey,
-		deviceIndex: deviceIndex,
-		isRunning:   false,
-		awsRegion:   awsRegion,
-		verbose:     verbose,
-		connectedOnce: false,
+		ctx:               ctx,
+		serverURL:         serverURL,
+		apiKey:            apiKey,
+		deviceIndex:       deviceIndex,
+		isRunning:         false,
+		awsRegion:         awsRegion,
+		verbose:           verbose,
+		useLocalToken:     useLocalToken,
+		connectedOnce:     false,
 		shutdownRequested: make(chan struct{}),
 	}, nil
 }
@@ -231,6 +257,115 @@ func (s *SpeechToText) connectToServer() error {
 	return nil
 }
 
+// requestToken requests a new AWS token from the server via WebSocket
+func (s *SpeechToText) requestToken() error {
+	if s.apiKey == "" {
+		return fmt.Errorf("API key is required for token generation")
+	}
+
+	if s.wsConn == nil {
+		return fmt.Errorf("WebSocket connection not established")
+	}
+
+	// Create a channel to receive the token response
+	tokenChan := make(chan *TokenResponse, 1)
+	errorChan := make(chan error, 1)
+
+	// Set up temporary message handler to capture token response
+	s.tokenResponseChan = tokenChan
+	s.tokenErrorChan = errorChan
+
+	// Send generate_token message
+	message := WSMessage{
+		Type: MessageTypeGenerateToken,
+		Data: map[string]interface{}{
+			"api_key": s.apiKey,
+		},
+	}
+
+	if err := s.wsConn.WriteJSON(message); err != nil {
+		return fmt.Errorf("failed to send token request: %v", err)
+	}
+
+	// Wait for response with timeout
+	select {
+	case tokenResp := <-tokenChan:
+		// Store token
+		s.tokenMutex.Lock()
+		s.currentToken = tokenResp
+		s.tokenMutex.Unlock()
+
+		if s.verbose {
+			fmt.Printf("✓ AWS token obtained (expires: %s)\n", tokenResp.Credentials.Expiration)
+		}
+		return nil
+
+	case err := <-errorChan:
+		return fmt.Errorf("token generation failed: %v", err)
+
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("token request timed out")
+	}
+}
+
+// startTokenRefresher starts a goroutine that refreshes the token periodically
+func (s *SpeechToText) startTokenRefresher() {
+	go func() {
+		ticker := time.NewTicker(tokenRefreshInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-s.shutdownRequested:
+				return
+			case <-ticker.C:
+				if s.verbose {
+					fmt.Println("Refreshing AWS token...")
+				}
+				if err := s.requestToken(); err != nil {
+					log.Printf("Failed to refresh token: %v", err)
+				}
+			}
+		}
+	}()
+}
+
+// getAWSConfig returns AWS config with appropriate credentials
+func (s *SpeechToText) getAWSConfig() (aws.Config, error) {
+	if s.useLocalToken {
+		// Use local AWS credentials
+		if s.verbose {
+			fmt.Println("Using local AWS credentials")
+		}
+		return config.LoadDefaultConfig(s.ctx, config.WithRegion(s.awsRegion))
+	}
+
+	// Use token from server
+	s.tokenMutex.RLock()
+	token := s.currentToken
+	s.tokenMutex.RUnlock()
+
+	if token == nil {
+		return aws.Config{}, fmt.Errorf("no AWS token available")
+	}
+
+	// Create credentials provider from token
+	credsProvider := credentials.NewStaticCredentialsProvider(
+		token.Credentials.AccessKeyId,
+		token.Credentials.SecretAccessKey,
+		token.Credentials.SessionToken,
+	)
+
+	cfg := aws.Config{
+		Region:      token.Region,
+		Credentials: credsProvider,
+	}
+
+	return cfg, nil
+}
+
 // readMessages listens for incoming WebSocket messages
 func (s *SpeechToText) readMessages() {
 	defer func() {
@@ -259,15 +394,69 @@ func (s *SpeechToText) readMessages() {
 			return
 		}
 
+		if s.verbose {
+			fmt.Printf("Received message: %s\n", msg.Type)
+		}
+
 		// Handle incoming messages
 		switch msg.Type {
 		case MessageTypeConnectionStatus:
 			if awsAvailable, ok := msg.Data["aws_available"].(bool); ok {
 				fmt.Printf("Server connection status: aws_available=%v\n", awsAvailable)
 			}
+		case MessageTypeTokenResponse:
+			// Handle token response
+			var data map[string]interface{}
+			data = msg.Data
+			if status, ok := data["status"].(string); ok && status == "success" {
+				// Parse credentials
+				if credsMap, ok := data["credentials"].(map[string]interface{}); ok {
+					tokenResp := &TokenResponse{
+						Status: status,
+						Credentials: AWSCredentials{
+							AccessKeyId:     credsMap["AccessKeyId"].(string),
+							SecretAccessKey: credsMap["SecretAccessKey"].(string),
+							SessionToken:    credsMap["SessionToken"].(string),
+							Expiration:      credsMap["Expiration"].(string),
+						},
+						Region: data["region"].(string),
+					}
+					
+					// Send to waiting channel
+					if s.tokenResponseChan != nil {
+						select {
+						case s.tokenResponseChan <- tokenResp:
+						default:
+						}
+					}
+				}
+			} else if errorMsg, ok := data["error"].(string); ok {
+				// Send error to waiting channel
+				if s.tokenErrorChan != nil {
+					select {
+					case s.tokenErrorChan <- fmt.Errorf(errorMsg):
+					default:
+					}
+				}
+			} else {
+				// Unknown token response format
+				if s.tokenErrorChan != nil {
+					select {
+					case s.tokenErrorChan <- fmt.Errorf("unknown token response format"):
+					default:
+					}
+				}
+			}
 		case MessageTypeError:
 			if errMsg, ok := msg.Data["message"].(string); ok {
 				fmt.Printf("Server error: %s\n", errMsg)
+				// Check if this is a token error
+				if s.tokenErrorChan != nil {
+					select {
+					case s.tokenErrorChan <- fmt.Errorf(errMsg):
+					default:
+					}
+				}
 			}
 		}
 	}
@@ -377,10 +566,10 @@ func (s *SpeechToText) listenAndTranscribe() error {
 	fmt.Println("\nListening... Speak into your microphone.")
 	fmt.Println("Press Ctrl+C to stop.\n")
 
-	// Load AWS config
-	cfg, err := config.LoadDefaultConfig(s.ctx, config.WithRegion(s.awsRegion))
+	// Get AWS config (from token or local credentials)
+	cfg, err := s.getAWSConfig()
 	if err != nil {
-		return fmt.Errorf("failed to load AWS config: %v", err)
+		return fmt.Errorf("failed to get AWS config: %v", err)
 	}
 
 	// Create AWS Transcribe Streaming client
@@ -566,9 +755,10 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 // Run executes the main application logic
 func (s *SpeechToText) Run() error {
 	// Check API key configuration
-	if s.apiKey == "" {
+	if s.apiKey == "" && !s.useLocalToken {
 		fmt.Println("\n⚠ Warning: API_KEY not set in environment.")
 		fmt.Println("Communication with the server will not be secured.")
+		fmt.Println("Token generation will not be available.")
 		fmt.Println("Set API_KEY in .env file for production use.\n")
 	}
 
@@ -587,6 +777,17 @@ func (s *SpeechToText) Run() error {
 		if strings.ToLower(response) != "y" {
 			return nil
 		}
+	}
+
+	// Request AWS credentials token if not using local credentials
+	if !s.useLocalToken {
+		fmt.Println("Requesting AWS credentials from server...")
+		if err := s.requestToken(); err != nil {
+			return fmt.Errorf("failed to obtain AWS token: %v", err)
+		}
+		
+		// Start token refresher in background
+		s.startTokenRefresher()
 	}
 
 	// Calibrate microphone
@@ -654,10 +855,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  %s -d 1 http://example.com:5050 # Use device 1 with remote server\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
 		fmt.Fprintf(os.Stderr, "  LT_AUDIO_DEVICE     Set default audio device (index or name)\n")
+		fmt.Fprintf(os.Stderr, "  LT_LOCAL_TOKEN      Use local AWS credentials instead of server token (true/false)\n")
 		fmt.Fprintf(os.Stderr, "  API_KEY             API key for server authentication\n")
 		fmt.Fprintf(os.Stderr, "  AWS_DEFAULT_REGION  AWS region for Transcribe (default: us-east-1)\n")
-		fmt.Fprintf(os.Stderr, "  AWS_ACCESS_KEY_ID   AWS access key (or use AWS CLI/IAM role)\n")
-		fmt.Fprintf(os.Stderr, "  AWS_SECRET_ACCESS_KEY  AWS secret key (or use AWS CLI/IAM role)\n")
+		fmt.Fprintf(os.Stderr, "  AWS_ACCESS_KEY_ID   AWS access key (when LT_LOCAL_TOKEN=true)\n")
+		fmt.Fprintf(os.Stderr, "  AWS_SECRET_ACCESS_KEY  AWS secret key (when LT_LOCAL_TOKEN=true)\n")
 	}
 
 	flag.Parse()
@@ -710,12 +912,15 @@ func main() {
 		}
 	}
 
-	// Get API key and AWS region
+	// Get API key, AWS region, and local token flag
 	apiKey := os.Getenv("API_KEY")
 	awsRegion := os.Getenv("AWS_DEFAULT_REGION")
 	if awsRegion == "" {
-		awsRegion = "us-east-1" // Default region
+		awsRegion = "eu-west-2" // Default region
 	}
+	
+	// Check if using local AWS credentials
+	useLocalToken := strings.ToLower(os.Getenv("LT_LOCAL_TOKEN")) == "true"
 
 	// Print configuration
 	fmt.Println(strings.Repeat("=", 60))
@@ -723,6 +928,11 @@ func main() {
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Printf("\nServer URL: %s\n", serverURL)
 	fmt.Printf("AWS Region: %s\n", awsRegion)
+	if useLocalToken {
+		fmt.Println("Token Mode: Local AWS credentials")
+	} else {
+		fmt.Println("Token Mode: Server-provided session credentials")
+	}
 if verbose {
     fmt.Println("Verbose: true")
 }
@@ -741,7 +951,7 @@ if verbose {
 	defer cancel()
 
 	// Create the application
-	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex, awsRegion, verbose)
+	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex, awsRegion, verbose, useLocalToken)
 	if err != nil {
 		log.Fatalf("Error creating application: %v", err)
 	}

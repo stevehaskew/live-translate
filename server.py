@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 # Import our refactored modules
 from client_map import TranslationClientMap
 from message_handler import MessageHandler, TranslationService
+from token_generator import TokenGenerator
 
 # Load environment variables
 load_dotenv()
@@ -43,8 +44,14 @@ translation_service = TranslationService(
 )
 aws_available = translation_service.is_available()
 
-# Initialize message handler
-message_handler = MessageHandler(translation_service, API_KEY)
+# Initialize token generator for AWS Transcribe credentials
+my_token_generator = TokenGenerator(
+    region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+)
+
+# Initialize message handler with token generator
+message_handler = MessageHandler(translation_service, API_KEY, my_token_generator)
+
 
 # Initialize client map
 client_map = TranslationClientMap()
@@ -65,6 +72,8 @@ MESSAGE_TYPE_NEW_TEXT = message_handler.MESSAGE_TYPE_NEW_TEXT
 MESSAGE_TYPE_TRANSLATED_TEXT = message_handler.MESSAGE_TYPE_TRANSLATED_TEXT
 MESSAGE_TYPE_REQUEST_TRANSLATION = message_handler.MESSAGE_TYPE_REQUEST_TRANSLATION
 MESSAGE_TYPE_TRANSLATION_RESULT = message_handler.MESSAGE_TYPE_TRANSLATION_RESULT
+MESSAGE_TYPE_GENERATE_TOKEN = message_handler.MESSAGE_TYPE_GENERATE_TOKEN
+MESSAGE_TYPE_TOKEN_RESPONSE = message_handler.MESSAGE_TYPE_TOKEN_RESPONSE
 MESSAGE_TYPE_ERROR = message_handler.MESSAGE_TYPE_ERROR
 
 
@@ -147,6 +156,12 @@ def websocket_handler(ws):
                     response = message_handler.handle_set_language(
                         client_id, language, client_map
                     )
+                    send_message(ws, response["type"], response["data"])
+
+                elif msg_type == MESSAGE_TYPE_GENERATE_TOKEN:
+                    # Handle token generation request from speech-to-text client
+                    provided_key = msg_data.get("api_key", "")
+                    response = message_handler.handle_generate_token(provided_key)
                     send_message(ws, response["type"], response["data"])
 
                 elif msg_type == MESSAGE_TYPE_NEW_TEXT:

@@ -199,6 +199,7 @@ aws cloudfront create-invalidation \
   - `DYNAMODB_TABLE_NAME`: Connection table name
   - `AWS_REGION`: AWS region
   - `API_KEY`: Authentication key for speech client
+  - `TRANSCRIBE_ROLE_ARN`: ARN of IAM role to assume for token generation (when enabled)
 
 ### DynamoDB Table
 - **Name**: `live-translate-connections-{environment}`
@@ -235,11 +236,39 @@ aws cloudfront create-invalidation \
 - **Validation Records**: Automatic certificate validation
 
 ### IAM Role & Policies
-- **Lambda Execution Role**: Allows Lambda to:
-  - Write CloudWatch Logs
-  - Read/Write DynamoDB
-  - Call API Gateway Management API
-  - Call AWS Translate and Comprehend
+
+#### Lambda Execution Role
+The Lambda function's execution role includes permissions to:
+- Write CloudWatch Logs
+- Read/Write DynamoDB table
+- Call API Gateway Management API (PostToConnection)
+- Call AWS Translate and Comprehend services
+- Assume the Transcribe client role (for token generation)
+
+#### Transcribe Client Role (Token Generation)
+When `enable_token_generation` is true, Terraform creates:
+
+- **Transcribe Client Role**: IAM role that grants access to AWS Transcribe Streaming
+  - Can be assumed by the Lambda execution role
+  - Scoped to `transcribe:StartStreamTranscription` permission only
+  - Uses ExternalId condition for additional security
+  
+- **AssumeRole Permission**: Lambda execution role can assume the Transcribe client role
+  - Required for the `/generate_token` endpoint to work
+  - Allows Lambda to generate temporary session credentials for speech clients
+  
+**How it works:**
+1. Speech client requests token via `/generate_token` endpoint (with API key)
+2. Lambda assumes the Transcribe client role using STS AssumeRole
+3. Lambda returns temporary credentials (valid for 1 hour) to the client
+4. Client uses temporary credentials to access AWS Transcribe
+5. Credentials are automatically refreshed by client every 20 minutes
+
+**Security benefits:**
+- Speech clients never need permanent AWS credentials
+- Temporary credentials are scoped to Transcribe service only
+- Credentials expire after 1 hour
+- ExternalId prevents confused deputy attacks
 
 ## Configuration
 
@@ -254,6 +283,7 @@ aws cloudfront create-invalidation \
 | `environment` | Environment name | No | `production` |
 | `project_name` | Project name prefix | No | `live-translate` |
 | `lambda_zip_path` | Path to Lambda zip | No | `../lambda_deployment.zip` |
+| `enable_token_generation` | Enable AWS token generation for Transcribe | No | `true` |
 
 ### config.json Format
 
@@ -362,6 +392,35 @@ Total for moderate usage: **~$20-50/month**
 
 Use [AWS Pricing Calculator](https://calculator.aws/) for detailed estimates.
 
+## Terraform Outputs
+
+After deployment, Terraform provides the following outputs:
+
+| Output | Description |
+|--------|-------------|
+| `cloudfront_distribution_url` | CloudFront distribution URL |
+| `cloudfront_custom_domain` | Custom domain for static website |
+| `cloudfront_distribution_id` | CloudFront distribution ID (for cache invalidation) |
+| `s3_bucket_name` | S3 bucket name for static files |
+| `websocket_api_endpoint` | WebSocket API custom domain endpoint |
+| `websocket_api_default_endpoint` | WebSocket API default AWS endpoint |
+| `websocket_api_id` | API Gateway WebSocket API ID |
+| `dynamodb_table_name` | DynamoDB table name for connections |
+| `lambda_function_name` | Lambda function name |
+| `api_domain` | Configured API domain name |
+| `transcribe_role_arn` | ARN of Transcribe IAM role (for token generation) |
+| `transcribe_role_name` | Name of Transcribe IAM role |
+
+View all outputs:
+```bash
+terraform output
+```
+
+Get a specific output:
+```bash
+terraform output -raw websocket_api_endpoint
+```
+
 ## Cleanup
 
 To destroy all resources:
@@ -394,6 +453,14 @@ aws logs tail /aws/lambda/live-translate-websocket-handler-production --follow
 1. Check Lambda has Translate IAM permissions
 2. Verify AWS region supports Translate service
 3. Check CloudWatch Logs for errors
+
+### Token Generation Not Working
+
+1. Verify `enable_token_generation` is set to `true` in `terraform.tfvars`
+2. Check that `TRANSCRIBE_ROLE_ARN` environment variable is set in Lambda
+3. Verify Lambda execution role has `sts:AssumeRole` permission
+4. Check Transcribe client role trust policy allows Lambda to assume it
+5. Review CloudWatch Logs for AssumeRole errors
 
 ### CloudFront Not Serving Files
 

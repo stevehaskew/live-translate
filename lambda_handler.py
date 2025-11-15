@@ -14,6 +14,7 @@ from botocore.exceptions import ClientError
 # Import our existing modules
 from client_map import TranslationClientMapDynamoDB
 from message_handler import MessageHandler, TranslationService
+from token_generator import TokenGenerator
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -28,7 +29,12 @@ API_KEY = os.environ.get("API_KEY")
 
 # Initialize services
 translation_service = TranslationService(region_name=AWS_REGION)
-message_handler = MessageHandler(translation_service, API_KEY)
+
+# Initialize token generator for AWS Transcribe credentials
+token_generator = TokenGenerator(region_name=AWS_REGION)
+
+# Initialize message handler with token generator
+message_handler = MessageHandler(translation_service, API_KEY, token_generator)
 
 # Initialize client map with DynamoDB
 try:
@@ -219,6 +225,12 @@ def handle_message(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             response = message_handler.handle_set_language(
                 connection_id, language, client_map
             )
+            send_message_to_connection(connection_id, response, apigw_client)
+
+        elif msg_type == message_handler.MESSAGE_TYPE_GENERATE_TOKEN:
+            # Handle token generation request from speech-to-text client
+            provided_key = msg_data.get("api_key", "")
+            response = message_handler.handle_generate_token(provided_key)
             send_message_to_connection(connection_id, response, apigw_client)
 
         elif msg_type == message_handler.MESSAGE_TYPE_NEW_TEXT:

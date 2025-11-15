@@ -62,3 +62,13 @@ output "acm_certificate_arn_api_gateway" {
   description = "ACM certificate ARN for API Gateway"
   value       = aws_acm_certificate.api_gateway.arn
 }
+
+output "transcribe_role_arn" {
+  description = "ARN of the IAM role for Transcribe service (used for token generation)"
+  value       = var.enable_token_generation ? aws_iam_role.transcribe_client[0].arn : null
+}
+
+output "transcribe_role_name" {
+  description = "Name of the IAM role for Transcribe service"
+  value       = var.enable_token_generation ? aws_iam_role.transcribe_client[0].name : null
+}
