@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.0](https://github.com/stevehaskew/live-translate/compare/v1.0.0...v1.1.0) (2025-11-15)
+
+
+### Features
+
+* implement server-side provisioning of aws tokens for transcription ([bd85051](https://github.com/stevehaskew/live-translate/commit/bd850511eeebb8ffecf259ea9dfe6c4a0ea563c2))
+
 ## 1.0.0 (2025-11-11)
 
 
