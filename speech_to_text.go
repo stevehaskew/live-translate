@@ -856,8 +856,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
 		fmt.Fprintf(os.Stderr, "  LT_AUDIO_DEVICE     Set default audio device (index or name)\n")
 		fmt.Fprintf(os.Stderr, "  LT_LOCAL_TOKEN      Use local AWS credentials instead of server token (true/false)\n")
+		fmt.Fprintf(os.Stderr, "  LT_ENDPOINT         Server endpoint (e.g. wss://api.mychurch.yot.church)\n")
 		fmt.Fprintf(os.Stderr, "  API_KEY             API key for server authentication\n")
-		fmt.Fprintf(os.Stderr, "  AWS_DEFAULT_REGION  AWS region for Transcribe (default: us-east-1)\n")
+		fmt.Fprintf(os.Stderr, "  AWS_DEFAULT_REGION  AWS region for Transcribe (default: eu-west-2)\n")
 		fmt.Fprintf(os.Stderr, "  AWS_ACCESS_KEY_ID   AWS access key (when LT_LOCAL_TOKEN=true)\n")
 		fmt.Fprintf(os.Stderr, "  AWS_SECRET_ACCESS_KEY  AWS secret key (when LT_LOCAL_TOKEN=true)\n")
 	}
@@ -877,8 +878,16 @@ func main() {
 
 	// Get server URL
 	serverURL := "http://localhost:5050/ws"
+	// Priority: CLI arg > LT_ENDPOINT env var > default
 	if flag.NArg() > 0 {
 		serverURL = flag.Arg(0)
+	} else if envEndpoint := os.Getenv("LT_ENDPOINT"); envEndpoint != "" {
+		serverURL = envEndpoint
+	}
+
+	// If the provided serverURL doesn't contain an explicit scheme, assume http://
+	if !strings.Contains(serverURL, "://") {
+		serverURL = "http://" + serverURL
 	}
 
 	// Determine device specification
