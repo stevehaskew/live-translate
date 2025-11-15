@@ -131,14 +131,44 @@ The API key secures communication between the speech-to-text client and the serv
 openssl rand -base64 32
 ```
 
-**AWS Credentials (Required for Go Client and Server)**:
+**AWS Credentials Configuration**:
+
+The application supports two modes for AWS Transcribe credentials:
+
+1. **Server-Provided Token Mode** (Recommended for Production):
+   - The Go client requests temporary session credentials from the server
+   - The server uses AWS STS AssumeRole to generate time-limited credentials
+   - Tokens are automatically refreshed every 20 minutes
+   - More secure: clients never need permanent AWS credentials
+
+2. **Local Credentials Mode** (For Development):
+   - The Go client uses local AWS credentials directly
+   - Useful for local testing and development
+
+**Server Configuration** (for token generation):
 ```
+# IAM Role ARN that the server will assume to generate Transcribe credentials
+TRANSCRIBE_ROLE_ARN=arn:aws:iam::123456789012:role/LiveTranslateTranscribeRole
+
+# Server's own AWS credentials (to call STS AssumeRole)
 AWS_ACCESS_KEY_ID=your_access_key_here
 AWS_SECRET_ACCESS_KEY=your_secret_key_here
 AWS_DEFAULT_REGION=us-east-1
 ```
 
-The client uses AWS Transcribe Streaming for speech recognition, and the server uses AWS Translate for translation. You can configure AWS credentials in several ways:
+**Client Configuration**:
+```
+# Set to "true" to use local AWS credentials instead of server tokens
+# Default: false (use server-provided tokens)
+LT_LOCAL_TOKEN=false
+
+# Only needed if LT_LOCAL_TOKEN=true
+# AWS_ACCESS_KEY_ID=your_access_key_here
+# AWS_SECRET_ACCESS_KEY=your_secret_key_here
+# AWS_DEFAULT_REGION=us-east-1
+```
+
+The server also requires AWS credentials for translation (AWS Translate). You can configure AWS credentials in several ways:
 
 1. **Environment variables** (as shown above)
 2. **AWS CLI configuration**:
@@ -148,11 +178,11 @@ The client uses AWS Transcribe Streaming for speech recognition, and the server 
 3. **IAM roles** (recommended for EC2, ECS, Lambda deployments)
 
 **Note**: 
-- The client requires AWS credentials for speech recognition (AWS Transcribe)
-- The server requires AWS credentials for translation (AWS Translate)
+- In Server-Provided Token mode (recommended), only the server needs AWS credentials
+- The client will request temporary credentials from the server via the `/generate_token` endpoint
+- Tokens are valid for 1 hour and automatically refreshed every 20 minutes
 - Without AWS credentials, the server will work in English-only mode (no translation)
 - Without an API_KEY set, the server will accept text from any client. Set API_KEY for production deployments
-- The Python client uses the SpeechRecognition library which doesn't require credentials (it uses Google's free API)
 
 ## Usage
 
@@ -294,7 +324,11 @@ Make sure to grant microphone access to Terminal in System Preferences → Secur
 3. Check that the AWS region supports Translate service
 4. The application will work in English-only mode if AWS is not configured
 
-## AWS IAM Policy (Translate)
+## AWS IAM Policies
+
+### Required Permissions for Server
+
+#### 1. AWS Translate Policy (for translation service)
 
 To allow the server to call AWS Translate's TranslateText API, attach a minimal IAM policy to the role or user the server runs under (for example: ECS task role, EC2 instance profile, or Lambda execution role). AWS Translate actions are service-level and do not support resource-level ARNs, so the policy uses a wildcard resource.
 
@@ -316,7 +350,7 @@ Minimal policy (TranslateText only):
 }
 ```
 
-Optional: restrict to a single region (example `us-east-1`) using a condition:
+Optional: restrict to a single region (example `eu-west-2`) using a condition:
 
 ```json
 {
@@ -339,11 +373,112 @@ Optional: restrict to a single region (example `us-east-1`) using a condition:
 }
 ```
 
-Recommendations
-- Attach this policy to an IAM role rather than distributing long-lived user credentials.
-- For ECS, use a task role; for EKS use IRSA; for EC2 use an instance profile; for Lambda attach to the execution role.
-- Monitor and log Translate API usage with CloudTrail.
-- Never commit credentials into source control; use the role or a secret manager.
+#### 2. STS AssumeRole Policy (for token generation)
+
+To allow the server to generate temporary credentials for clients, attach this policy to the server's IAM role or user:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "sts:AssumeRole",
+      "Resource": "arn:aws:iam::123456789012:role/LiveTranslateTranscribeRole"
+    }
+  ]
+}
+```
+
+Replace `123456789012` with your AWS account ID and adjust the role name if different.
+
+#### 3. Transcribe Role (assumed by server to generate client tokens)
+
+Create an IAM role (e.g., `LiveTranslateTranscribeRole`) with the following trust policy to allow your server to assume it:
+
+Trust policy:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::123456789012:role/YourServerRole"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "live-translate"
+        }
+      }
+    }
+  ]
+}
+```
+
+Permissions policy for the Transcribe role:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "transcribe:StartStreamTranscription"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+### Configuration Summary
+
+1. **Server Role** needs:
+   - `translate:TranslateText` and `comprehend:DetectDominantLanguage` (for translation)
+   - `sts:AssumeRole` permission for the Transcribe role (for token generation)
+
+2. **Transcribe Role** (assumed by server) needs:
+   - `transcribe:StartStreamTranscription` (clients use this via temporary credentials)
+   - Trust policy allowing the server role to assume it
+
+3. **Client** needs:
+   - Only the API key (no AWS credentials required in server-provided token mode)
+   - Or local AWS credentials if `LT_LOCAL_TOKEN=true` (development only)
+
+### Recommendations
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "translate:TranslateText",
+        "comprehend:DetectDominantLanguage"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "eu-west-2"
+        }
+      }
+    }
+  ]
+}
+```
+
+### Recommendations
+- **Use IAM roles** instead of long-lived credentials for all deployments
+- For ECS, use a task role; for EKS use IRSA; for EC2 use an instance profile; for Lambda attach to the execution role
+- **Enable CloudTrail logging** to monitor AWS API usage (Translate, Transcribe, STS)
+- **Rotate credentials** regularly if using access keys for development
+- **Never commit credentials** into source control; use environment variables, IAM roles, or a secret manager
+- **Set session duration** appropriately for the Transcribe role (default: 1 hour, max: 12 hours for roles)
+- **Use condition keys** in trust policies to add an extra layer of security (e.g., `sts:ExternalId`)
+- **Monitor token generation** frequency to ensure clients are refreshing tokens appropriately
 
 
 ### Connection Issues
@@ -352,6 +487,8 @@ If the speech-to-text app can't connect to the server:
 1. Ensure the Flask server is running
 2. Check firewall settings
 3. Verify the server URL is correct
+4. If using server-provided tokens, ensure `TRANSCRIBE_ROLE_ARN` is configured
+5. Check server logs for token generation errors
 
 ## AWS Cloud Deployment
 
@@ -482,15 +619,28 @@ The application uses API key authentication to secure text input between the spe
   openssl rand -base64 32
   ```
 - **Warning Mode**: If no API_KEY is set, both server and client will display warnings and operate in an unsecured mode
+- **Token Generation**: The API key is also used to authenticate requests to the `/generate_token` endpoint
+
+### AWS Credentials Token Provisioning
+
+The application uses a secure token provisioning system for AWS Transcribe access:
+
+- **Server-Provided Tokens** (Default): The Go client requests temporary session credentials from the server via the `/generate_token` endpoint
+- **Time-Limited**: Tokens are valid for 1 hour (AWS STS default) and automatically refreshed every 20 minutes
+- **Principle of Least Privilege**: Temporary credentials only grant access to `transcribe:StartStreamTranscription`
+- **No Client Credentials**: Clients never need permanent AWS credentials, reducing security risk
+- **Local Mode**: Set `LT_LOCAL_TOKEN=true` for development to use local AWS credentials instead
 
 ### General Security Best Practices
 
 - Never commit `.env` file or AWS credentials to version control
 - Use IAM roles with minimal permissions for production deployments
+- Configure the `TRANSCRIBE_ROLE_ARN` to limit scope of assumed role permissions
 - Consider using AWS Secrets Manager for credential management in production
 - Implement authentication for production web interface
-- Rotate API keys periodically
+- Rotate API keys and review IAM policies periodically
 - Use HTTPS/WSS in production environments
+- Monitor CloudTrail logs for unusual token generation or AWS API activity
 
 ## License
 
