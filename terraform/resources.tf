@@ -152,6 +152,54 @@ resource "aws_iam_role" "lambda_execution" {
   tags = local.common_tags
 }
 
+# IAM role for Transcribe service (to be assumed by Lambda for token generation)
+resource "aws_iam_role" "transcribe_client" {
+  count = var.enable_token_generation ? 1 : 0
+  name  = "${var.project_name}-transcribe-client-${var.environment}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.lambda_execution.arn
+        }
+        Condition = {
+          StringEquals = {
+            "sts:ExternalId" = "live-translate-${var.environment}"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = merge(local.common_tags, {
+    Name = "${var.project_name}-transcribe-client-${var.environment}"
+  })
+}
+
+# IAM policy for Transcribe client role
+resource "aws_iam_role_policy" "transcribe_client" {
+  count = var.enable_token_generation ? 1 : 0
+  name  = "${var.project_name}-transcribe-policy-${var.environment}"
+  role  = aws_iam_role.transcribe_client[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "transcribe:StartStreamTranscription"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # IAM policy for Lambda execution
 resource "aws_iam_role_policy" "lambda_execution" {
   name = "${var.project_name}-lambda-policy-${var.environment}"
@@ -210,6 +258,26 @@ resource "aws_iam_role_policy" "lambda_execution" {
   })
 }
 
+# Additional IAM policy for Lambda to assume Transcribe role
+resource "aws_iam_role_policy" "lambda_assume_transcribe" {
+  count = var.enable_token_generation ? 1 : 0
+  name  = "${var.project_name}-lambda-assume-transcribe-${var.environment}"
+  role  = aws_iam_role.lambda_execution.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sts:AssumeRole"
+        ]
+        Resource = aws_iam_role.transcribe_client[0].arn
+      }
+    ]
+  })
+}
+
 # Lambda function
 resource "aws_lambda_function" "websocket_handler" {
   filename         = var.lambda_zip_path
@@ -222,10 +290,15 @@ resource "aws_lambda_function" "websocket_handler" {
   memory_size      = 512
 
   environment {
-    variables = {
-      DYNAMODB_TABLE_NAME = aws_dynamodb_table.connections.name
-      API_KEY             = var.api_key
-    }
+    variables = merge(
+      {
+        DYNAMODB_TABLE_NAME = aws_dynamodb_table.connections.name
+        API_KEY             = var.api_key
+      },
+      var.enable_token_generation ? {
+        TRANSCRIBE_ROLE_ARN = aws_iam_role.transcribe_client[0].arn
+      } : {}
+    )
   }
 
   tags = merge(local.common_tags, {

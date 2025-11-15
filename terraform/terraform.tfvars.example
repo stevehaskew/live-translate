@@ -30,3 +30,8 @@ project_name = "live-translate"
 
 # Path to Lambda deployment package (relative to terraform directory)
 lambda_zip_path = "../lambda_deployment.zip"
+
+# Enable AWS token generation for Transcribe service
+# Set to false if you want clients to use local AWS credentials instead
+# When true, creates a Transcribe role and grants Lambda permission to assume it
+enable_token_generation = true

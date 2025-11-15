@@ -43,3 +43,9 @@ variable "lambda_zip_path" {
   type        = string
   default     = "../lambda_deployment.zip"
 }
+
+variable "enable_token_generation" {
+  description = "Enable AWS token generation for Transcribe service. If true, creates Transcribe role and grants AssumeRole permission"
+  type        = bool
+  default     = true
+}
