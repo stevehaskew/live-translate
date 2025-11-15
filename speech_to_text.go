@@ -37,6 +37,8 @@ const (
 	MessageTypeLanguageSet      = "language_set"
 	MessageTypeNewText          = "new_text"
 	MessageTypeTranslatedText   = "translated_text"
+	MessageTypeGenerateToken    = "generate_token"
+	MessageTypeTokenResponse    = "token_response"
 	MessageTypeError            = "error"
 )
 
@@ -92,6 +94,8 @@ type SpeechToText struct {
 	useLocalToken     bool // Use local AWS credentials instead of server token
 	currentToken      *TokenResponse
 	tokenMutex        sync.RWMutex
+	tokenResponseChan chan *TokenResponse
+	tokenErrorChan    chan error
 	// connectedOnce is set to true once the socket has successfully connected
 	connectedOnce     bool
 	connMu            sync.RWMutex
@@ -255,70 +259,55 @@ func (s *SpeechToText) connectToServer() error {
 	return nil
 }
 
-// requestToken requests a new AWS token from the server
+// requestToken requests a new AWS token from the server via WebSocket
 func (s *SpeechToText) requestToken() error {
 	if s.apiKey == "" {
 		return fmt.Errorf("API key is required for token generation")
 	}
 
-	// Parse server URL to construct token endpoint
-	u, err := url.Parse(s.serverURL)
-	if err != nil {
-		return fmt.Errorf("failed to parse server URL: %v", err)
+	if s.wsConn == nil {
+		return fmt.Errorf("WebSocket connection not established")
 	}
 
-	// Convert ws(s) scheme to http(s) for REST API call
-	scheme := "http"
-	if u.Scheme == "wss" || u.Scheme == "https" {
-		scheme = "https"
+	// Create a channel to receive the token response
+	tokenChan := make(chan *TokenResponse, 1)
+	errorChan := make(chan error, 1)
+
+	// Set up temporary message handler to capture token response
+	s.tokenResponseChan = tokenChan
+	s.tokenErrorChan = errorChan
+
+	// Send generate_token message
+	message := WSMessage{
+		Type: MessageTypeGenerateToken,
+		Data: map[string]interface{}{
+			"api_key": s.apiKey,
+		},
 	}
 
-	tokenURL := fmt.Sprintf("%s://%s/generate_token", scheme, u.Host)
-
-	// Create HTTP request
-	req, err := http.NewRequestWithContext(s.ctx, "POST", tokenURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create token request: %v", err)
+	if err := s.wsConn.WriteJSON(message); err != nil {
+		return fmt.Errorf("failed to send token request: %v", err)
 	}
 
-	// Add Authorization header with API key
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", s.apiKey))
-	req.Header.Set("Content-Type", "application/json")
+	// Wait for response with timeout
+	select {
+	case tokenResp := <-tokenChan:
+		// Store token
+		s.tokenMutex.Lock()
+		s.currentToken = tokenResp
+		s.tokenMutex.Unlock()
 
-	// Send request
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to request token: %v", err)
+		if s.verbose {
+			fmt.Printf("✓ AWS token obtained (expires: %s)\n", tokenResp.Credentials.Expiration)
+		}
+		return nil
+
+	case err := <-errorChan:
+		return fmt.Errorf("token generation failed: %v", err)
+
+	case <-time.After(10 * time.Second):
+		return fmt.Errorf("token request timed out")
 	}
-	defer resp.Body.Close()
-
-	// Check response status
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("token request failed with status %d: %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response
-	var tokenResp TokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return fmt.Errorf("failed to decode token response: %v", err)
-	}
-
-	if tokenResp.Status != "success" {
-		return fmt.Errorf("token generation failed: %s", tokenResp.Error)
-	}
-
-	// Store token
-	s.tokenMutex.Lock()
-	s.currentToken = &tokenResp
-	s.tokenMutex.Unlock()
-
-	if s.verbose {
-		fmt.Printf("✓ AWS token obtained (expires: %s)\n", tokenResp.Credentials.Expiration)
-	}
-
-	return nil
 }
 
 // startTokenRefresher starts a goroutine that refreshes the token periodically
@@ -413,9 +402,51 @@ func (s *SpeechToText) readMessages() {
 			if awsAvailable, ok := msg.Data["aws_available"].(bool); ok {
 				fmt.Printf("Server connection status: aws_available=%v\n", awsAvailable)
 			}
+		case MessageTypeTokenResponse:
+			// Handle token response
+			if data, ok := msg.Data["data"].(map[string]interface{}); ok {
+				if status, ok := data["status"].(string); ok && status == "success" {
+					// Parse credentials
+					if credsMap, ok := data["credentials"].(map[string]interface{}); ok {
+						tokenResp := &TokenResponse{
+							Status: status,
+							Credentials: AWSCredentials{
+								AccessKeyId:     credsMap["AccessKeyId"].(string),
+								SecretAccessKey: credsMap["SecretAccessKey"].(string),
+								SessionToken:    credsMap["SessionToken"].(string),
+								Expiration:      credsMap["Expiration"].(string),
+							},
+							Region: data["region"].(string),
+						}
+						
+						// Send to waiting channel
+						if s.tokenResponseChan != nil {
+							select {
+							case s.tokenResponseChan <- tokenResp:
+							default:
+							}
+						}
+					}
+				} else if errorMsg, ok := data["error"].(string); ok {
+					// Send error to waiting channel
+					if s.tokenErrorChan != nil {
+						select {
+						case s.tokenErrorChan <- fmt.Errorf(errorMsg):
+						default:
+						}
+					}
+				}
+			}
 		case MessageTypeError:
 			if errMsg, ok := msg.Data["message"].(string); ok {
 				fmt.Printf("Server error: %s\n", errMsg)
+				// Check if this is a token error
+				if s.tokenErrorChan != nil {
+					select {
+					case s.tokenErrorChan <- fmt.Errorf(errMsg):
+					default:
+					}
+				}
 			}
 		}
 	}

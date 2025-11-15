@@ -44,8 +44,8 @@ translation_service = TranslationService(
 )
 aws_available = translation_service.is_available()
 
-# Initialize message handler
-message_handler = MessageHandler(translation_service, API_KEY)
+# Initialize message handler with token generator
+message_handler = MessageHandler(translation_service, API_KEY, token_generator)
 
 # Initialize token generator for AWS Transcribe credentials
 token_generator = TokenGenerator(
@@ -71,6 +71,8 @@ MESSAGE_TYPE_NEW_TEXT = message_handler.MESSAGE_TYPE_NEW_TEXT
 MESSAGE_TYPE_TRANSLATED_TEXT = message_handler.MESSAGE_TYPE_TRANSLATED_TEXT
 MESSAGE_TYPE_REQUEST_TRANSLATION = message_handler.MESSAGE_TYPE_REQUEST_TRANSLATION
 MESSAGE_TYPE_TRANSLATION_RESULT = message_handler.MESSAGE_TYPE_TRANSLATION_RESULT
+MESSAGE_TYPE_GENERATE_TOKEN = message_handler.MESSAGE_TYPE_GENERATE_TOKEN
+MESSAGE_TYPE_TOKEN_RESPONSE = message_handler.MESSAGE_TYPE_TOKEN_RESPONSE
 MESSAGE_TYPE_ERROR = message_handler.MESSAGE_TYPE_ERROR
 
 
@@ -122,38 +124,6 @@ def health():
     }
 
 
-@app.route("/generate_token", methods=["POST"])
-def generate_token():
-    """
-    Generate temporary AWS credentials for Transcribe access.
-    Requires API key authentication via Authorization header.
-    """
-    from flask import request
-    
-    # Check API key authentication
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        logger.warning("Token generation attempted without valid Authorization header")
-        return jsonify({"error": "Unauthorized: Missing or invalid Authorization header"}), 401
-    
-    provided_key = auth_header[7:]  # Remove "Bearer " prefix
-    
-    # Validate API key using message_handler's validation
-    if not message_handler.validate_api_key(provided_key):
-        logger.warning("Token generation attempted with invalid API key")
-        return jsonify({"error": "Unauthorized: Invalid API key"}), 401
-    
-    # Generate token
-    result = token_generator.generate_token()
-    
-    if result["status"] == "error":
-        logger.error(f"Token generation failed: {result.get('error')}")
-        return jsonify({"error": result.get("error")}), 500
-    
-    logger.info("Token generated successfully")
-    return jsonify(result)
-
-
 @sock.route("/ws")
 def websocket_handler(ws):
     """Handle WebSocket connections."""
@@ -185,6 +155,12 @@ def websocket_handler(ws):
                     response = message_handler.handle_set_language(
                         client_id, language, client_map
                     )
+                    send_message(ws, response["type"], response["data"])
+
+                elif msg_type == MESSAGE_TYPE_GENERATE_TOKEN:
+                    # Handle token generation request from speech-to-text client
+                    provided_key = msg_data.get("api_key", "")
+                    response = message_handler.handle_generate_token(provided_key)
                     send_message(ws, response["type"], response["data"])
 
                 elif msg_type == MESSAGE_TYPE_NEW_TEXT:

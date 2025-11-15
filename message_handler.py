@@ -96,12 +96,15 @@ class MessageHandler:
     MESSAGE_TYPE_TRANSLATED_TEXT = "translated_text"
     MESSAGE_TYPE_REQUEST_TRANSLATION = "request_translation"
     MESSAGE_TYPE_TRANSLATION_RESULT = "translation_result"
+    MESSAGE_TYPE_GENERATE_TOKEN = "generate_token"
+    MESSAGE_TYPE_TOKEN_RESPONSE = "token_response"
     MESSAGE_TYPE_ERROR = "error"
 
     def __init__(
         self,
         translation_service: TranslationService,
         api_key: Optional[str] = None,
+        token_generator: Optional[Any] = None,
     ):
         """
         Initialize the message handler.
@@ -109,9 +112,11 @@ class MessageHandler:
         Args:
             translation_service: TranslationService instance
             api_key: Optional API key for authentication
+            token_generator: Optional TokenGenerator instance for generating AWS tokens
         """
         self.translation_service = translation_service
         self.api_key = api_key
+        self.token_generator = token_generator
 
     def validate_api_key(self, provided_key: str) -> bool:
         """
@@ -251,6 +256,48 @@ class MessageHandler:
                 "translated": translated_text,
                 "lang": target_language,
             },
+        }
+
+    def handle_generate_token(self, api_key: str) -> Dict[str, Any]:
+        """
+        Handle token generation request from speech-to-text client.
+
+        Args:
+            api_key: Provided API key for authentication
+
+        Returns:
+            Response message dictionary with token or error
+        """
+        # Validate API key
+        if not self.validate_api_key(api_key):
+            logger.warning("Token generation attempted with invalid API key")
+            return {
+                "type": self.MESSAGE_TYPE_ERROR,
+                "data": {"message": "Unauthorized: Invalid API key"},
+            }
+
+        # Check if token generator is available
+        if not self.token_generator:
+            logger.error("Token generator not configured")
+            return {
+                "type": self.MESSAGE_TYPE_ERROR,
+                "data": {"message": "Token generation not available on this server"},
+            }
+
+        # Generate token
+        result = self.token_generator.generate_token()
+
+        if result["status"] == "error":
+            logger.error(f"Token generation failed: {result.get('error')}")
+            return {
+                "type": self.MESSAGE_TYPE_ERROR,
+                "data": {"message": result.get("error")},
+            }
+
+        logger.info("Token generated successfully via WebSocket")
+        return {
+            "type": self.MESSAGE_TYPE_TOKEN_RESPONSE,
+            "data": result,
         }
 
     def create_connection_status_message(self) -> Dict[str, Any]:

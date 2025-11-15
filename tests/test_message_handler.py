@@ -223,7 +223,62 @@ class TestMessageHandler(unittest.TestCase):
         self.assertEqual(
             self.handler.MESSAGE_TYPE_TRANSLATION_RESULT, "translation_result"
         )
+        self.assertEqual(self.handler.MESSAGE_TYPE_GENERATE_TOKEN, "generate_token")
+        self.assertEqual(self.handler.MESSAGE_TYPE_TOKEN_RESPONSE, "token_response")
         self.assertEqual(self.handler.MESSAGE_TYPE_ERROR, "error")
+
+    def test_handle_generate_token_success(self):
+        """Test successful token generation via WebSocket message."""
+        # Mock token generator
+        mock_token_gen = MagicMock()
+        mock_token_gen.generate_token.return_value = {
+            "status": "success",
+            "credentials": {
+                "AccessKeyId": "ASIATESTACCESSKEY",
+                "SecretAccessKey": "test-secret",
+                "SessionToken": "test-token",
+                "Expiration": "2024-12-31T23:59:59+00:00",
+            },
+            "region": "us-east-1",
+        }
+
+        handler = MessageHandler(self.mock_translation_service, "test-api-key", mock_token_gen)
+        response = handler.handle_generate_token("test-api-key")
+
+        self.assertEqual(response["type"], "token_response")
+        self.assertIn("data", response)
+        self.assertEqual(response["data"]["status"], "success")
+
+    def test_handle_generate_token_invalid_key(self):
+        """Test token generation with invalid API key."""
+        mock_token_gen = MagicMock()
+        handler = MessageHandler(self.mock_translation_service, "test-api-key", mock_token_gen)
+        response = handler.handle_generate_token("wrong-key")
+
+        self.assertEqual(response["type"], "error")
+        self.assertIn("Unauthorized", response["data"]["message"])
+
+    def test_handle_generate_token_no_generator(self):
+        """Test token generation when generator is not configured."""
+        handler = MessageHandler(self.mock_translation_service, "test-api-key", None)
+        response = handler.handle_generate_token("test-api-key")
+
+        self.assertEqual(response["type"], "error")
+        self.assertIn("not available", response["data"]["message"])
+
+    def test_handle_generate_token_generation_error(self):
+        """Test token generation when generator returns error."""
+        mock_token_gen = MagicMock()
+        mock_token_gen.generate_token.return_value = {
+            "status": "error",
+            "error": "Failed to assume role",
+        }
+
+        handler = MessageHandler(self.mock_translation_service, "test-api-key", mock_token_gen)
+        response = handler.handle_generate_token("test-api-key")
+
+        self.assertEqual(response["type"], "error")
+        self.assertIn("Failed to assume role", response["data"]["message"])
 
 
 if __name__ == "__main__":
