@@ -22,6 +22,7 @@ echo "Copying Python files..."
 cp "$PROJECT_ROOT/lambda_handler.py" "$BUILD_DIR/"
 cp "$PROJECT_ROOT/client_map.py" "$BUILD_DIR/"
 cp "$PROJECT_ROOT/message_handler.py" "$BUILD_DIR/"
+cp "$PROJECT_ROOT/token_generator.py" "$BUILD_DIR/"
 
 # Install Python dependencies
 echo "Installing Python dependencies..."

@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"sync"
 	"log"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -396,6 +394,10 @@ func (s *SpeechToText) readMessages() {
 			return
 		}
 
+		if s.verbose {
+			fmt.Printf("Received message: %s\n", msg.Type)
+		}
+
 		// Handle incoming messages
 		switch msg.Type {
 		case MessageTypeConnectionStatus:
@@ -404,36 +406,44 @@ func (s *SpeechToText) readMessages() {
 			}
 		case MessageTypeTokenResponse:
 			// Handle token response
-			if data, ok := msg.Data["data"].(map[string]interface{}); ok {
-				if status, ok := data["status"].(string); ok && status == "success" {
-					// Parse credentials
-					if credsMap, ok := data["credentials"].(map[string]interface{}); ok {
-						tokenResp := &TokenResponse{
-							Status: status,
-							Credentials: AWSCredentials{
-								AccessKeyId:     credsMap["AccessKeyId"].(string),
-								SecretAccessKey: credsMap["SecretAccessKey"].(string),
-								SessionToken:    credsMap["SessionToken"].(string),
-								Expiration:      credsMap["Expiration"].(string),
-							},
-							Region: data["region"].(string),
-						}
-						
-						// Send to waiting channel
-						if s.tokenResponseChan != nil {
-							select {
-							case s.tokenResponseChan <- tokenResp:
-							default:
-							}
-						}
+			var data map[string]interface{}
+			data = msg.Data
+			if status, ok := data["status"].(string); ok && status == "success" {
+				// Parse credentials
+				if credsMap, ok := data["credentials"].(map[string]interface{}); ok {
+					tokenResp := &TokenResponse{
+						Status: status,
+						Credentials: AWSCredentials{
+							AccessKeyId:     credsMap["AccessKeyId"].(string),
+							SecretAccessKey: credsMap["SecretAccessKey"].(string),
+							SessionToken:    credsMap["SessionToken"].(string),
+							Expiration:      credsMap["Expiration"].(string),
+						},
+						Region: data["region"].(string),
 					}
-				} else if errorMsg, ok := data["error"].(string); ok {
-					// Send error to waiting channel
-					if s.tokenErrorChan != nil {
+					
+					// Send to waiting channel
+					if s.tokenResponseChan != nil {
 						select {
-						case s.tokenErrorChan <- fmt.Errorf(errorMsg):
+						case s.tokenResponseChan <- tokenResp:
 						default:
 						}
+					}
+				}
+			} else if errorMsg, ok := data["error"].(string); ok {
+				// Send error to waiting channel
+				if s.tokenErrorChan != nil {
+					select {
+					case s.tokenErrorChan <- fmt.Errorf(errorMsg):
+					default:
+					}
+				}
+			} else {
+				// Unknown token response format
+				if s.tokenErrorChan != nil {
+					select {
+					case s.tokenErrorChan <- fmt.Errorf("unknown token response format"):
+					default:
 					}
 				}
 			}
@@ -906,7 +916,7 @@ func main() {
 	apiKey := os.Getenv("API_KEY")
 	awsRegion := os.Getenv("AWS_DEFAULT_REGION")
 	if awsRegion == "" {
-		awsRegion = "us-east-1" // Default region
+		awsRegion = "eu-west-2" // Default region
 	}
 	
 	// Check if using local AWS credentials

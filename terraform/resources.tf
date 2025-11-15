@@ -161,15 +161,11 @@ resource "aws_iam_role" "transcribe_client" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "AllowLambdaExecutionRoleToAssume"
         Action = "sts:AssumeRole"
         Effect = "Allow"
         Principal = {
           AWS = aws_iam_role.lambda_execution.arn
-        }
-        Condition = {
-          StringEquals = {
-            "sts:ExternalId" = "live-translate-${var.environment}"
-          }
         }
       }
     ]
@@ -268,10 +264,9 @@ resource "aws_iam_role_policy" "lambda_assume_transcribe" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "AllowAssumeTranscribeClientRole"
         Effect = "Allow"
-        Action = [
-          "sts:AssumeRole"
-        ]
+        Action = "sts:AssumeRole"
         Resource = aws_iam_role.transcribe_client[0].arn
       }
     ]
