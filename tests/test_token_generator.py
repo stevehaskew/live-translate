@@ -159,9 +159,7 @@ class TestTokenGenerator(unittest.TestCase):
         error_response = {
             "Error": {"Code": "AccessDenied", "Message": "User is not authorized"}
         }
-        mock_sts.assume_role.side_effect = ClientError(
-            error_response, "AssumeRole"
-        )
+        mock_sts.assume_role.side_effect = ClientError(error_response, "AssumeRole")
 
         generator = TokenGenerator(
             role_arn="arn:aws:iam::123456789012:role/TestRole",

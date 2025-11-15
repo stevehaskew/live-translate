@@ -54,9 +54,7 @@ class TokenGenerator:
             logger.warning(f"⚠ AWS STS not available: {e}")
             logger.warning("Token generation will not be available.")
 
-    def generate_token(
-        self, session_name: Optional[str] = None
-    ) -> Dict[str, Any]:
+    def generate_token(self, session_name: Optional[str] = None) -> Dict[str, Any]:
         """
         Generate temporary AWS credentials for Transcribe access.
 
@@ -80,6 +78,7 @@ class TokenGenerator:
             # Generate unique session name if not provided
             if not session_name:
                 import time
+
                 session_name = f"live-translate-{int(time.time())}"
 
             # Assume role to get temporary credentials

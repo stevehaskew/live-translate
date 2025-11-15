@@ -242,7 +242,9 @@ class TestMessageHandler(unittest.TestCase):
             "region": "us-east-1",
         }
 
-        handler = MessageHandler(self.mock_translation_service, "test-api-key", mock_token_gen)
+        handler = MessageHandler(
+            self.mock_translation_service, "test-api-key", mock_token_gen
+        )
         response = handler.handle_generate_token("test-api-key")
 
         self.assertEqual(response["type"], "token_response")
@@ -252,7 +254,9 @@ class TestMessageHandler(unittest.TestCase):
     def test_handle_generate_token_invalid_key(self):
         """Test token generation with invalid API key."""
         mock_token_gen = MagicMock()
-        handler = MessageHandler(self.mock_translation_service, "test-api-key", mock_token_gen)
+        handler = MessageHandler(
+            self.mock_translation_service, "test-api-key", mock_token_gen
+        )
         response = handler.handle_generate_token("wrong-key")
 
         self.assertEqual(response["type"], "error")
@@ -274,7 +278,9 @@ class TestMessageHandler(unittest.TestCase):
             "error": "Failed to assume role",
         }
 
-        handler = MessageHandler(self.mock_translation_service, "test-api-key", mock_token_gen)
+        handler = MessageHandler(
+            self.mock_translation_service, "test-api-key", mock_token_gen
+        )
         response = handler.handle_generate_token("test-api-key")
 
         self.assertEqual(response["type"], "error")

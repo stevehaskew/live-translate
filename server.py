@@ -44,13 +44,14 @@ translation_service = TranslationService(
 )
 aws_available = translation_service.is_available()
 
-# Initialize message handler with token generator
-message_handler = MessageHandler(translation_service, API_KEY, token_generator)
-
 # Initialize token generator for AWS Transcribe credentials
-token_generator = TokenGenerator(
+my_token_generator = TokenGenerator(
     region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 )
+
+# Initialize message handler with token generator
+message_handler = MessageHandler(translation_service, API_KEY, my_token_generator)
+
 
 # Initialize client map
 client_map = TranslationClientMap()
