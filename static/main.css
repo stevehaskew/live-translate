@@ -264,6 +264,67 @@ select:focus {
     margin-bottom: 5px;
 }
 
+/* Reconnect banner styling */
+.reconnect-banner {
+    background: #fee2e2;
+    border: 2px solid #ef4444;
+    padding: 20px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    color: #991b1b;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 15px;
+    text-align: center;
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.reconnect-banner strong {
+    display: block;
+    font-size: 1.1rem;
+    margin-bottom: 5px;
+}
+
+.reconnect-banner p {
+    margin: 0;
+    line-height: 1.5;
+}
+
+.reconnect-btn {
+    background: #10b981;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 1rem;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+    transition: all 0.2s ease;
+}
+
+.reconnect-btn:hover {
+    background: #059669;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+}
+
+.reconnect-btn:active {
+    transform: translateY(0);
+}
+
 footer {
     text-align: center;
     color: white;

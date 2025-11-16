@@ -25,6 +25,12 @@
             Only English text will be displayed.
         </div>
 
+        <div id="reconnectBanner" class="reconnect-banner" style="display: none;">
+            <strong>🔌 Connection Lost</strong>
+            <p>The connection to the translation service was lost. Click below to reconnect and resume receiving translations.</p>
+            <button id="reconnectBtn" class="reconnect-btn">Reconnect</button>
+        </div>
+
         <div class="controls-wrapper">
             <div class="controls" id="controlsPanel">
             <!-- settings toggle moved here so it appears at the top-right of the controls panel -->
@@ -135,10 +141,13 @@
         const closeSettingsBtn = document.getElementById('closeSettingsBtn');
         const controlsPanel = document.getElementById('controlsPanel');
         const warningBanner = document.getElementById('warningBanner');
+        const reconnectBanner = document.getElementById('reconnectBanner');
+        const reconnectBtn = document.getElementById('reconnectBtn');
 
         let awsAvailable = true; // Will be updated from server
         let messageCount = 0;
         let socket;
+        let userDisconnected = false; // Track if user manually disconnected
 
         // Settings panel collapse/expand functionality
         const SETTINGS_STORAGE_KEY = 'liveTranslateSettingsCollapsed';
@@ -199,8 +208,10 @@
 
         // WebSocket connection
         let ws;
-        let reconnectInterval = 5000; // 5 seconds
+        let reconnectInterval = 30000; // 30 seconds - longer interval for less aggressive reconnection
         let reconnectTimer = null;
+        let reconnectAttempts = 0;
+        let maxAutoReconnectAttempts = 3; // Only try auto-reconnect a few times
 
         // Message types
         const MessageType = {
@@ -216,6 +227,9 @@
 
         // Connect to WebSocket
         function connectWebSocket() {
+            // Hide reconnect banner when attempting to connect
+            reconnectBanner.style.display = 'none';
+            
             // Determine WebSocket URL
             let wsUrl;
             if (config.websocketUrl && config.websocketUrl.trim() !== '') {
@@ -235,6 +249,10 @@
                     statusIndicator.classList.remove('disconnected');
                     statusText.textContent = 'Connected';
                     statusText.style.color = '#10b981';
+                    
+                    // Reset reconnection tracking
+                    reconnectAttempts = 0;
+                    userDisconnected = false;
 
                     // Clear reconnect timer if set
                     if (reconnectTimer) {
@@ -254,9 +272,16 @@
                     statusText.textContent = 'Disconnected';
                     statusText.style.color = '#ef4444';
 
-                    // Attempt to reconnect
-                    if (!reconnectTimer) {
+                    // Show reconnect banner for user to manually reconnect
+                    reconnectBanner.style.display = 'flex';
+
+                    // Attempt automatic reconnection only a few times
+                    if (!reconnectTimer && reconnectAttempts < maxAutoReconnectAttempts) {
+                        reconnectAttempts++;
+                        console.log(`Auto-reconnect attempt ${reconnectAttempts} of ${maxAutoReconnectAttempts}`);
                         reconnectTimer = setTimeout(connectWebSocket, reconnectInterval);
+                    } else if (reconnectAttempts >= maxAutoReconnectAttempts) {
+                        console.log('Max auto-reconnect attempts reached. User must manually reconnect.');
                     }
                 };
 
@@ -274,6 +299,7 @@
                 };
             } catch (error) {
                 console.error('Failed to create WebSocket:', error);
+                reconnectBanner.style.display = 'flex';
             }
         }
 
@@ -439,6 +465,15 @@
             });
         }
 
+        // Wire up the reconnect button
+        if (reconnectBtn) {
+            reconnectBtn.addEventListener('click', () => {
+                console.log('User manually reconnecting...');
+                reconnectAttempts = 0; // Reset counter for manual reconnect
+                connectWebSocket();
+            });
+        }
+
         // Language selection handler
         languageSelect.addEventListener('change', (event) => {
             const selectedLanguage = event.target.value;
@@ -454,8 +489,13 @@
 
         // Handle page visibility to reconnect if needed
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && (!ws || ws.readyState !== WebSocket.OPEN)) {
-                connectWebSocket();
+            if (document.visibilityState === 'visible') {
+                // When page becomes visible, check connection status
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    console.log('Page became visible with closed connection, showing reconnect banner');
+                    reconnectBanner.style.display = 'flex';
+                    // Don't auto-reconnect, let user decide
+                }
             }
         });
 
