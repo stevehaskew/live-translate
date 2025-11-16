@@ -6,14 +6,14 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
-	"sync"
-	"log"
 	"io"
+	"log"
 	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -48,10 +48,10 @@ type WSMessage struct {
 
 // TokenResponse represents the response from the generate_token endpoint
 type TokenResponse struct {
-	Status      string            `json:"status"`
-	Credentials AWSCredentials    `json:"credentials"`
-	Region      string            `json:"region"`
-	Error       string            `json:"error,omitempty"`
+	Status      string         `json:"status"`
+	Credentials AWSCredentials `json:"credentials"`
+	Region      string         `json:"region"`
+	Error       string         `json:"error,omitempty"`
 }
 
 // AWSCredentials represents temporary AWS credentials
@@ -63,11 +63,13 @@ type AWSCredentials struct {
 }
 
 const (
-	sampleRate      = 16000
-	framesPerBuffer = 8000 // 0.5 seconds of audio
-	numChannels     = 1
-	phraseTimeLimit = 10 * time.Second
+	sampleRate           = 16000
+	framesPerBuffer      = 8000 // 0.5 seconds of audio
+	numChannels          = 1
+	phraseTimeLimit      = 10 * time.Second
 	tokenRefreshInterval = 20 * time.Minute // Refresh token every 20 minutes
+	maxRetries           = 5                // Maximum number of retry attempts for websocket connection
+	initialRetryDelay    = 1 * time.Second  // Initial retry delay
 )
 
 // AudioDevice represents an audio input device
@@ -99,6 +101,8 @@ type SpeechToText struct {
 	connMu            sync.RWMutex
 	shutdownRequested chan struct{}
 	shutdownOnce      sync.Once
+	retryCount        int // Current retry attempt count
+	retryMutex        sync.Mutex
 }
 
 // NewSpeechToText creates a new SpeechToText instance
@@ -192,6 +196,65 @@ func findDeviceIndexByName(name string) (int, error) {
 	}
 
 	return -1, fmt.Errorf("device not found")
+}
+
+// calculateRetryDelay calculates the exponential backoff delay for retry attempts
+func calculateRetryDelay(retryCount int) time.Duration {
+	// Exponential backoff: 1s, 2s, 4s, 8s, 16s
+	delay := initialRetryDelay * time.Duration(1<<uint(retryCount))
+	// Cap at 16 seconds to avoid very long waits
+	if delay > 16*time.Second {
+		delay = 16 * time.Second
+	}
+	return delay
+}
+
+// connectToServerWithRetry attempts to connect to the server with retry logic
+func (s *SpeechToText) connectToServerWithRetry() error {
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		s.retryMutex.Lock()
+		s.retryCount = attempt
+		s.retryMutex.Unlock()
+
+		if attempt > 0 {
+			delay := calculateRetryDelay(attempt - 1)
+			fmt.Printf("Retry attempt %d/%d after %v...\n", attempt, maxRetries, delay)
+
+			// Wait with cancellation support
+			select {
+			case <-time.After(delay):
+			case <-s.ctx.Done():
+				return fmt.Errorf("connection cancelled")
+			case <-s.shutdownRequested:
+				return fmt.Errorf("shutdown requested")
+			}
+		}
+
+		err := s.connectToServer()
+		if err == nil {
+			// Reset retry count on successful connection
+			s.retryMutex.Lock()
+			s.retryCount = 0
+			s.retryMutex.Unlock()
+			return nil
+		}
+
+		lastErr = err
+
+		if attempt < maxRetries {
+			if s.verbose {
+				fmt.Printf("Connection failed: %v\n", err)
+			} else {
+				fmt.Printf("Connection failed, will retry...\n")
+			}
+		}
+	}
+
+	// All retries exhausted
+	fmt.Printf("\n✖ Failed to connect after %d attempts\n", maxRetries+1)
+	return fmt.Errorf("exhausted all retry attempts: %v", lastErr)
 }
 
 // connectToServer establishes connection to the server
@@ -388,10 +451,35 @@ func (s *SpeechToText) readMessages() {
 				return
 			}
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				fmt.Println("WebSocket closed normally")
 				return
 			}
-			log.Printf("WebSocket read error: %v", err)
-			return
+
+			// Unexpected websocket closure - attempt to reconnect
+			fmt.Printf("WebSocket connection lost: %v\n", err)
+			fmt.Println("Attempting to reconnect...")
+
+			// Try to reconnect with retry logic
+			if reconnectErr := s.connectToServerWithRetry(); reconnectErr != nil {
+				log.Printf("Failed to reconnect: %v", reconnectErr)
+				fmt.Println("\n✖ Unable to reconnect to server. Exiting...")
+				// Signal the application to stop
+				s.GracefulStop()
+				return
+			}
+
+			fmt.Println("✓ Reconnected successfully")
+
+			// If we're not using local tokens, request a new token after reconnection
+			if !s.useLocalToken {
+				fmt.Println("Requesting new AWS credentials...")
+				if tokenErr := s.requestToken(); tokenErr != nil {
+					log.Printf("Failed to obtain token after reconnect: %v", tokenErr)
+				}
+			}
+
+			// Continue reading messages from the new connection
+			continue
 		}
 
 		if s.verbose {
@@ -421,7 +509,7 @@ func (s *SpeechToText) readMessages() {
 						},
 						Region: data["region"].(string),
 					}
-					
+
 					// Send to waiting channel
 					if s.tokenResponseChan != nil {
 						select {
@@ -641,7 +729,7 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 	// Start goroutine to handle transcription results
 	go func() {
 		defer close(done)
-		
+
 		for event := range eventStream.Events() {
 			switch e := event.(type) {
 			case *types.TranscriptResultStreamMemberTranscriptEvent:
@@ -670,7 +758,9 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 									}
 								} else {
 									fmt.Println("⚠ Not connected to server. Attempting to reconnect...")
-									s.connectToServer()
+									if err := s.connectToServerWithRetry(); err != nil {
+										log.Printf("Failed to reconnect: %v", err)
+									}
 								}
 							}
 						}
@@ -684,7 +774,7 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 				return
 			}
 		}
-		
+
 		// Check for errors
 		if err := eventStream.Err(); err != nil {
 			done <- err
@@ -752,6 +842,7 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 
 	return nil
 }
+
 // Run executes the main application logic
 func (s *SpeechToText) Run() error {
 	// Check API key configuration
@@ -762,9 +853,9 @@ func (s *SpeechToText) Run() error {
 		fmt.Println("Set API_KEY in .env file for production use.\n")
 	}
 
-	// Connect to server
-	if err := s.connectToServer(); err != nil {
-		fmt.Println("\n⚠ Warning: Could not connect to server.")
+	// Connect to server with retry logic
+	if err := s.connectToServerWithRetry(); err != nil {
+		fmt.Println("\n⚠ Warning: Could not connect to server after multiple attempts.")
 		// When verbose, show the underlying error and helpful troubleshooting hints
 		if s.verbose {
 			fmt.Fprintf(os.Stderr, "Connection error details: %v\n", err)
@@ -775,17 +866,17 @@ func (s *SpeechToText) Run() error {
 		var response string
 		fmt.Scanln(&response)
 		if strings.ToLower(response) != "y" {
-			return nil
+			return fmt.Errorf("unable to connect to server: %v", err)
 		}
 	}
 
 	// Request AWS credentials token if not using local credentials
-	if !s.useLocalToken {
+	if !s.useLocalToken && s.wsConn != nil {
 		fmt.Println("Requesting AWS credentials from server...")
 		if err := s.requestToken(); err != nil {
 			return fmt.Errorf("failed to obtain AWS token: %v", err)
 		}
-		
+
 		// Start token refresher in background
 		s.startTokenRefresher()
 	}
@@ -838,8 +929,8 @@ func main() {
 	listDevicesLong := flag.Bool("list-devices", false, "List all available audio input devices and exit")
 	deviceSpec := flag.String("d", "", "Select audio input device by index or name")
 	deviceSpecLong := flag.String("device", "", "Select audio input device by index or name")
-    verboseShort := flag.Bool("v", false, "Enable verbose debug logging")
-    verboseLong := flag.Bool("verbose", false, "Enable verbose debug logging")
+	verboseShort := flag.Bool("v", false, "Enable verbose debug logging")
+	verboseLong := flag.Bool("verbose", false, "Enable verbose debug logging")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [server_url]\n\n", os.Args[0])
@@ -927,7 +1018,7 @@ func main() {
 	if awsRegion == "" {
 		awsRegion = "eu-west-2" // Default region
 	}
-	
+
 	// Check if using local AWS credentials
 	useLocalToken := strings.ToLower(os.Getenv("LT_LOCAL_TOKEN")) == "true"
 
@@ -942,9 +1033,9 @@ func main() {
 	} else {
 		fmt.Println("Token Mode: Server-provided session credentials")
 	}
-if verbose {
-    fmt.Println("Verbose: true")
-}
+	if verbose {
+		fmt.Println("Verbose: true")
+	}
 	if deviceIndex >= 0 {
 		if deviceName != "" {
 			fmt.Printf("Audio Device: %s (index %d)\n", deviceName, deviceIndex)
