@@ -359,8 +359,6 @@ func (s *SpeechToText) requestToken() error {
 
 		if s.verbose {
 			fmt.Printf("✓ AWS token obtained (expires: %s, region: %s)\n", tokenResp.Credentials.Expiration, tokenResp.Region)
-		} else {
-			fmt.Printf("✓ AWS token obtained\n")
 		}
 		return nil
 
@@ -391,11 +389,15 @@ func (s *SpeechToText) startTokenRefresher() {
 				}
 				return
 			case <-ticker.C:
-				fmt.Printf("⟳ Refreshing AWS token (interval: %v)...\n", tokenRefreshInterval)
+				// Always log token refresh attempts (critical for debugging token expiration)
+				if s.verbose {
+					fmt.Printf("⟳ Refreshing AWS token (interval: %v)...\n", tokenRefreshInterval)
+				}
 				if err := s.requestToken(); err != nil {
+					// Always log errors
 					log.Printf("✖ Failed to refresh token: %v", err)
-				} else {
-					fmt.Println("✓ AWS token refreshed successfully")
+				} else if s.verbose {
+					fmt.Println("✓ Token refreshed successfully")
 				}
 			}
 		}
