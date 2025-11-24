@@ -65,7 +65,7 @@ const (
 	sampleRate           = 16000
 	framesPerBuffer      = 8000 // 0.5 seconds of audio
 	numChannels          = 1
-	phraseTimeLimit      = 10 * time.Second
+	phraseTimeLimit      = 5 * time.Second
 	tokenRefreshInterval = 20 * time.Minute // Refresh token every 20 minutes
 	maxRetries           = 5                // Maximum number of retry attempts for websocket connection
 	initialRetryDelay    = 1 * time.Second  // Initial retry delay

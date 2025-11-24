@@ -82,7 +82,9 @@ class TokenGenerator:
 
                 session_name = f"live-translate-{int(time.time())}"
 
-            logger.info(f"Generating AWS token (session: {session_name}, duration: {self.session_duration}s)")
+            logger.info(
+                f"Generating AWS token (session: {session_name}, duration: {self.session_duration}s)"
+            )
 
             # Assume role to get temporary credentials
             response = self.sts_client.assume_role(
@@ -93,7 +95,9 @@ class TokenGenerator:
 
             credentials = response["Credentials"]
 
-            logger.info(f"✓ Token generated successfully (expires: {credentials['Expiration'].isoformat()})")
+            logger.info(
+                f"✓ Token generated successfully (expires: {credentials['Expiration'].isoformat()})"
+            )
 
             return {
                 "status": "success",
