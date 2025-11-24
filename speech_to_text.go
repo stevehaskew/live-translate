@@ -19,7 +19,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming"
 	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming/types"
 	"github.com/gordonklaus/portaudio"
@@ -66,7 +65,7 @@ const (
 	sampleRate           = 16000
 	framesPerBuffer      = 8000 // 0.5 seconds of audio
 	numChannels          = 1
-	phraseTimeLimit      = 10 * time.Second
+	phraseTimeLimit      = 5 * time.Second
 	tokenRefreshInterval = 20 * time.Minute // Refresh token every 20 minutes
 	maxRetries           = 5                // Maximum number of retry attempts for websocket connection
 	initialRetryDelay    = 1 * time.Second  // Initial retry delay
@@ -359,7 +358,7 @@ func (s *SpeechToText) requestToken() error {
 		s.tokenMutex.Unlock()
 
 		if s.verbose {
-			fmt.Printf("✓ AWS token obtained (expires: %s)\n", tokenResp.Credentials.Expiration)
+			fmt.Printf("✓ AWS token obtained (expires: %s, region: %s)\n", tokenResp.Credentials.Expiration, tokenResp.Region)
 		}
 		return nil
 
@@ -380,19 +379,57 @@ func (s *SpeechToText) startTokenRefresher() {
 		for {
 			select {
 			case <-s.ctx.Done():
+				if s.verbose {
+					fmt.Println("Token refresher stopped (context cancelled)")
+				}
 				return
 			case <-s.shutdownRequested:
+				if s.verbose {
+					fmt.Println("Token refresher stopped (shutdown requested)")
+				}
 				return
 			case <-ticker.C:
+				// Always log token refresh attempts (critical for debugging token expiration)
 				if s.verbose {
-					fmt.Println("Refreshing AWS token...")
+					fmt.Printf("⟳ Refreshing AWS token (interval: %v)...\n", tokenRefreshInterval)
 				}
 				if err := s.requestToken(); err != nil {
-					log.Printf("Failed to refresh token: %v", err)
+					// Always log errors
+					log.Printf("✖ Failed to refresh token: %v", err)
+				} else if s.verbose {
+					fmt.Println("✓ Token refreshed successfully")
 				}
 			}
 		}
 	}()
+}
+
+// dynamicCredentialsProvider implements aws.CredentialsProvider
+// It always retrieves the latest token from the SpeechToText instance
+type dynamicCredentialsProvider struct {
+	stt *SpeechToText
+}
+
+// Retrieve implements the aws.CredentialsProvider interface
+func (p *dynamicCredentialsProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
+	p.stt.tokenMutex.RLock()
+	token := p.stt.currentToken
+	p.stt.tokenMutex.RUnlock()
+
+	if token == nil {
+		return aws.Credentials{}, fmt.Errorf("no AWS token available")
+	}
+
+	if p.stt.verbose {
+		fmt.Printf("Using AWS credentials (expires: %s)\n", token.Credentials.Expiration)
+	}
+
+	return aws.Credentials{
+		AccessKeyID:     token.Credentials.AccessKeyId,
+		SecretAccessKey: token.Credentials.SecretAccessKey,
+		SessionToken:    token.Credentials.SessionToken,
+		Source:          "DynamicTokenProvider",
+	}, nil
 }
 
 // getAWSConfig returns AWS config with appropriate credentials
@@ -405,7 +442,7 @@ func (s *SpeechToText) getAWSConfig() (aws.Config, error) {
 		return config.LoadDefaultConfig(s.ctx, config.WithRegion(s.awsRegion))
 	}
 
-	// Use token from server
+	// Use token from server with dynamic provider that refreshes automatically
 	s.tokenMutex.RLock()
 	token := s.currentToken
 	s.tokenMutex.RUnlock()
@@ -414,12 +451,8 @@ func (s *SpeechToText) getAWSConfig() (aws.Config, error) {
 		return aws.Config{}, fmt.Errorf("no AWS token available")
 	}
 
-	// Create credentials provider from token
-	credsProvider := credentials.NewStaticCredentialsProvider(
-		token.Credentials.AccessKeyId,
-		token.Credentials.SecretAccessKey,
-		token.Credentials.SessionToken,
-	)
+	// Create a dynamic credentials provider that always reads the latest token
+	credsProvider := &dynamicCredentialsProvider{stt: s}
 
 	cfg := aws.Config{
 		Region:      token.Region,
