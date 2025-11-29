@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -140,7 +141,7 @@ func getInputDevices() ([]AudioDevice, error) {
 		if deviceInfo.MaxInputChannels > 0 {
 			devices = append(devices, AudioDevice{
 				Index:    i,
-				Name:     deviceInfo.Name,
+				Name:     strings.TrimSpace(deviceInfo.Name),
 				Channels: deviceInfo.MaxInputChannels,
 			})
 		}
@@ -166,7 +167,7 @@ func listAudioDevices() error {
 	}
 
 	for _, device := range devices {
-		fmt.Printf("%d: %s (%d channels)\n", device.Index, device.Name, device.Channels)
+		fmt.Printf("%d: \"%s\"\n", device.Index, device.Name)
 	}
 
 	fmt.Println("\n" + strings.Repeat("=", 60))
@@ -555,7 +556,7 @@ func (s *SpeechToText) readMessages() {
 				// Send error to waiting channel
 				if s.tokenErrorChan != nil {
 					select {
-					case s.tokenErrorChan <- fmt.Errorf(errorMsg):
+					case s.tokenErrorChan <- fmt.Errorf("%s", errorMsg):
 					default:
 					}
 				}
@@ -574,7 +575,7 @@ func (s *SpeechToText) readMessages() {
 				// Check if this is a token error
 				if s.tokenErrorChan != nil {
 					select {
-					case s.tokenErrorChan <- fmt.Errorf(errMsg):
+					case s.tokenErrorChan <- fmt.Errorf("%s", errMsg):
 					default:
 					}
 				}
@@ -685,7 +686,7 @@ func (s *SpeechToText) listenAndTranscribe() error {
 	fmt.Println("SPEECH-TO-TEXT LIVE TRANSLATION")
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println("\nListening... Speak into your microphone.")
-	fmt.Println("Press Ctrl+C to stop.\n")
+	fmt.Println("Press Ctrl+C to stop.")
 
 	// Get AWS config (from token or local credentials)
 	cfg, err := s.getAWSConfig()
@@ -954,7 +955,11 @@ func (s *SpeechToText) GracefulStop() {
 }
 
 func main() {
-	// Load environment variables
+	// Load environment variables from user home config (~/.yot/config)
+	if home, err := os.UserHomeDir(); err == nil {
+		_ = godotenv.Load(filepath.Join(home, ".yot", "config"))
+	}
+	// Also load project .env (if present)
 	godotenv.Load()
 
 	// Parse command-line flags
