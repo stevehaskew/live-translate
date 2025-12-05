@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.0](https://github.com/stevehaskew/live-translate/compare/v1.1.1...v1.2.0) (2025-12-05)
+
+
+### Features
+
+* config file ingestion for client ([404c431](https://github.com/stevehaskew/live-translate/commit/404c4316ba4ad83b047df2c467360a5e5cba5be7))
+
+
+### Bug Fixes
+
+* add better error handling for aws token expiry ([564e901](https://github.com/stevehaskew/live-translate/commit/564e9011ea95de3e07c138294498b95a156fd928)), closes [#74](https://github.com/stevehaskew/live-translate/issues/74)
+* fix aws token rotation by implementing dynamic credentials provider ([77110a3](https://github.com/stevehaskew/live-translate/commit/77110a39b7413123cedd5ada76ae452c55a393f3))
+
 ## [1.1.1](https://github.com/stevehaskew/live-translate/compare/v1.1.0...v1.1.1) (2025-11-15)
 
 
