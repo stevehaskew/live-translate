@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -149,5 +151,107 @@ func TestDynamicCredentialsProviderNoToken(t *testing.T) {
 	}
 	if err.Error() != "no AWS token available" {
 		t.Errorf("Expected error 'no AWS token available', got '%v'", err)
+	}
+}
+
+// TestIsTokenExpiredError tests the token expiration error detection
+func TestIsTokenExpiredError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "expired token error",
+			err:      fmt.Errorf("The security token included in the request is expired"),
+			expected: true,
+		},
+		{
+			name:     "expired token exception",
+			err:      fmt.Errorf("ExpiredTokenException: The token has expired"),
+			expected: true,
+		},
+		{
+			name:     "token has expired",
+			err:      fmt.Errorf("token has expired"),
+			expected: true,
+		},
+		{
+			name:     "security token expired",
+			err:      fmt.Errorf("security token expired"),
+			expected: true,
+		},
+		{
+			name:     "credentials have expired",
+			err:      fmt.Errorf("credentials have expired"),
+			expected: true,
+		},
+		{
+			name:     "unrelated expired message not matched",
+			err:      fmt.Errorf("certificate expired"),
+			expected: false, // We only match specific AWS token patterns, not generic "expired"
+		},
+		{
+			name:     "request timeout not matched",
+			err:      fmt.Errorf("request has expired"),
+			expected: false, // Removed this pattern to avoid false positives with generic timeouts
+		},
+		{
+			name:     "non-expired error",
+			err:      fmt.Errorf("connection refused"),
+			expected: false,
+		},
+		{
+			name:     "access denied error",
+			err:      fmt.Errorf("AccessDenied: User is not authorized"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isTokenExpiredError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isTokenExpiredError(%v) = %v, want %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestTokenExpiredError tests the TokenExpiredError type
+func TestTokenExpiredError(t *testing.T) {
+	innerErr := fmt.Errorf("the security token included in the request is expired")
+	tokenErr := &TokenExpiredError{Err: innerErr}
+
+	// Test Error() method
+	errStr := tokenErr.Error()
+	if !strings.Contains(errStr, "AWS token expired") {
+		t.Errorf("TokenExpiredError.Error() = %s, want to contain 'AWS token expired'", errStr)
+	}
+	if !strings.Contains(errStr, innerErr.Error()) {
+		t.Errorf("TokenExpiredError.Error() = %s, want to contain inner error message", errStr)
+	}
+
+	// Test Unwrap() method
+	unwrapped := tokenErr.Unwrap()
+	if unwrapped != innerErr {
+		t.Errorf("TokenExpiredError.Unwrap() = %v, want %v", unwrapped, innerErr)
+	}
+
+	// Test that isTokenExpiredError detects wrapped error
+	if !isTokenExpiredError(tokenErr) {
+		t.Error("isTokenExpiredError should detect TokenExpiredError")
+	}
+}
+
+// TestMaxTokenRefreshRetriesConstant verifies the max token refresh retries constant
+func TestMaxTokenRefreshRetriesConstant(t *testing.T) {
+	if maxTokenRefreshRetries != 3 {
+		t.Errorf("maxTokenRefreshRetries = %d, want 3", maxTokenRefreshRetries)
 	}
 }
