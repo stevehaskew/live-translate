@@ -63,14 +63,50 @@ type AWSCredentials struct {
 }
 
 const (
-	sampleRate           = 16000
-	framesPerBuffer      = 8000 // 0.5 seconds of audio
-	numChannels          = 1
-	phraseTimeLimit      = 5 * time.Second
-	tokenRefreshInterval = 20 * time.Minute // Refresh token every 20 minutes
-	maxRetries           = 5                // Maximum number of retry attempts for websocket connection
-	initialRetryDelay    = 1 * time.Second  // Initial retry delay
+	sampleRate             = 16000
+	framesPerBuffer        = 8000 // 0.5 seconds of audio
+	numChannels            = 1
+	phraseTimeLimit        = 5 * time.Second
+	tokenRefreshInterval   = 20 * time.Minute // Refresh token every 20 minutes
+	maxRetries             = 5                // Maximum number of retry attempts for websocket connection
+	initialRetryDelay      = 1 * time.Second  // Initial retry delay
+	maxTokenRefreshRetries = 3                // Maximum retries for token refresh during transcription
 )
+
+// TokenExpiredError indicates that the AWS credentials have expired
+type TokenExpiredError struct {
+	Err error
+}
+
+func (e *TokenExpiredError) Error() string {
+	return fmt.Sprintf("AWS token expired: %v", e.Err)
+}
+
+func (e *TokenExpiredError) Unwrap() error {
+	return e.Err
+}
+
+// isTokenExpiredError checks if the error indicates an expired AWS token
+func isTokenExpiredError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	// Check for specific AWS expired token error messages
+	expiredPatterns := []string{
+		"expiredtokenexception",                                 // AWS SDK exception type
+		"the security token included in the request is expired", // Full AWS error message
+		"token has expired",                                     // Generic token expiration
+		"security token expired",                                // Alternative AWS message format
+		"credentials have expired",                              // AWS credentials expiration
+	}
+	for _, pattern := range expiredPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+	return false
+}
 
 // AudioDevice represents an audio input device
 type AudioDevice struct {
@@ -688,18 +724,9 @@ func (s *SpeechToText) listenAndTranscribe() error {
 	fmt.Println("\nListening... Speak into your microphone.")
 	fmt.Println("Press Ctrl+C to stop.")
 
-	// Get AWS config (from token or local credentials)
-	cfg, err := s.getAWSConfig()
-	if err != nil {
-		return fmt.Errorf("failed to get AWS config: %v", err)
-	}
-
-	// Create AWS Transcribe Streaming client
-	transcribeClient := transcribestreaming.NewFromConfig(cfg)
-	s.transcribeClient = transcribeClient
-
-	// Get device info
+	// Get device info (do this once, outside the retry loop)
 	var device *portaudio.DeviceInfo
+	var err error
 	if s.deviceIndex >= 0 {
 		allDevices, err := portaudio.Devices()
 		if err != nil {
@@ -736,8 +763,67 @@ func (s *SpeechToText) listenAndTranscribe() error {
 	}
 	defer stream.Stop()
 
-	// Start AWS Transcribe streaming session
-	return s.startTranscribeStream(buffer)
+	// Retry loop for handling token expiration
+	// Initial attempt + up to maxTokenRefreshRetries retry attempts
+	tokenRefreshRetries := 0
+	for {
+		// Check for shutdown
+		select {
+		case <-s.shutdownRequested:
+			return nil
+		case <-s.ctx.Done():
+			return nil
+		default:
+		}
+
+		// Get AWS config (refresh on each retry to pick up new token)
+		cfg, err := s.getAWSConfig()
+		if err != nil {
+			return fmt.Errorf("failed to get AWS config: %v", err)
+		}
+
+		// Create AWS Transcribe Streaming client
+		transcribeClient := transcribestreaming.NewFromConfig(cfg)
+		s.transcribeClient = transcribeClient
+
+		// Start AWS Transcribe streaming session
+		err = s.startTranscribeStream(buffer)
+		if err == nil {
+			return nil
+		}
+
+		// Check if the error is due to an expired token
+		if !isTokenExpiredError(err) {
+			// For non-token errors, return the error immediately
+			return err
+		}
+
+		// Token error detected - check if we can retry
+		tokenRefreshRetries++
+		if tokenRefreshRetries > maxTokenRefreshRetries {
+			return fmt.Errorf("max token refresh retries (%d) exceeded: %v", maxTokenRefreshRetries, err)
+		}
+
+		fmt.Printf("\n⚠ AWS token expired. Refreshing token (attempt %d/%d)...\n", tokenRefreshRetries, maxTokenRefreshRetries)
+
+		// Request a new token from the server
+		if !s.useLocalToken && s.wsConn != nil {
+			if tokenErr := s.requestToken(); tokenErr != nil {
+				log.Printf("Failed to refresh token: %v", tokenErr)
+				// Wait a bit before retrying
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			fmt.Println("✓ Token refreshed successfully. Restarting transcription...")
+		} else if s.useLocalToken {
+			// For local tokens, the AWS SDK should handle refresh automatically
+			// but we still retry in case of transient issues
+			fmt.Println("⚠ Using local AWS credentials. Restarting transcription...")
+		}
+
+		// Small delay before restarting
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // startTranscribeStream starts a streaming transcription session with AWS Transcribe
@@ -811,7 +897,12 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 
 		// Check for errors
 		if err := eventStream.Err(); err != nil {
-			done <- err
+			// Wrap token expiration errors for proper handling upstream
+			if isTokenExpiredError(err) {
+				done <- &TokenExpiredError{Err: err}
+			} else {
+				done <- err
+			}
 		}
 	}()
 
@@ -855,6 +946,12 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 					},
 				})
 				if err != nil {
+					// Check if this is a token expiration error - if so, signal it
+					if isTokenExpiredError(err) {
+						done <- &TokenExpiredError{Err: err}
+						eventStream.Close()
+						return
+					}
 					log.Printf("Error sending audio: %v", err)
 					// If we get an error and shutdown was requested, exit
 					select {
@@ -871,6 +968,10 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 	// Wait for completion or error
 	err = <-done
 	if err != nil {
+		// Preserve token expired error type for proper handling upstream
+		if tokenErr, ok := err.(*TokenExpiredError); ok {
+			return tokenErr
+		}
 		return fmt.Errorf("transcription error: %v", err)
 	}
 
@@ -884,7 +985,7 @@ func (s *SpeechToText) Run() error {
 		fmt.Println("\n⚠ Warning: API_KEY not set in environment.")
 		fmt.Println("Communication with the server will not be secured.")
 		fmt.Println("Token generation will not be available.")
-		fmt.Println("Set API_KEY in .env file for production use.\n")
+		fmt.Println("Set API_KEY in .env file for production use.")
 	}
 
 	// Connect to server with retry logic

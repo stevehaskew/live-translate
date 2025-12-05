@@ -218,6 +218,7 @@ speech_to_text_go
 speech_to_text_go-*
 *.exe
 speech_to_text
+live-translate
 
 # Lambda build artifacts
 lambda_build/
