@@ -73,6 +73,26 @@ const (
 	maxTokenRefreshRetries = 3                // Maximum retries for token refresh during transcription
 )
 
+// Error patterns for detecting specific error conditions
+var (
+	tokenExpiredPatterns = []string{
+		"expiredtokenexception",                                 // AWS SDK exception type
+		"the security token included in the request is expired", // Full AWS error message
+		"token has expired",                                     // Generic token expiration
+		"security token expired",                                // Alternative AWS message format
+		"credentials have expired",                              // AWS credentials expiration
+	}
+
+	websocketClosedPatterns = []string{
+		"websocket: close sent",           // Websocket already closed
+		"websocket: close received",       // Received close frame
+		"use of closed network connection", // Network connection closed
+		"broken pipe",                     // Broken connection
+		"connection reset by peer",        // Connection reset
+		"websocket: connection closed",    // Connection closed
+	}
+)
+
 // TokenExpiredError indicates that the AWS credentials have expired
 type TokenExpiredError struct {
 	Err error
@@ -86,26 +106,32 @@ func (e *TokenExpiredError) Unwrap() error {
 	return e.Err
 }
 
+// containsAnyPattern checks if the error string contains any of the given patterns
+func containsAnyPattern(errStr string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 // isTokenExpiredError checks if the error indicates an expired AWS token
 func isTokenExpiredError(err error) bool {
 	if err == nil {
 		return false
 	}
 	errStr := strings.ToLower(err.Error())
-	// Check for specific AWS expired token error messages
-	expiredPatterns := []string{
-		"expiredtokenexception",                                 // AWS SDK exception type
-		"the security token included in the request is expired", // Full AWS error message
-		"token has expired",                                     // Generic token expiration
-		"security token expired",                                // Alternative AWS message format
-		"credentials have expired",                              // AWS credentials expiration
+	return containsAnyPattern(errStr, tokenExpiredPatterns)
+}
+
+// isWebSocketClosedError checks if the error indicates a closed or broken websocket connection
+func isWebSocketClosedError(err error) bool {
+	if err == nil {
+		return false
 	}
-	for _, pattern := range expiredPatterns {
-		if strings.Contains(errStr, pattern) {
-			return true
-		}
-	}
-	return false
+	errStr := strings.ToLower(err.Error())
+	return containsAnyPattern(errStr, websocketClosedPatterns)
 }
 
 // AudioDevice represents an audio input device
@@ -291,6 +317,33 @@ func (s *SpeechToText) connectToServerWithRetry() error {
 	// All retries exhausted
 	fmt.Printf("\n✖ Failed to connect after %d attempts\n", maxRetries+1)
 	return fmt.Errorf("exhausted all retry attempts: %v", lastErr)
+}
+
+// handleWebSocketReconnection handles reconnection and token refresh after a websocket failure
+func (s *SpeechToText) handleWebSocketReconnection() error {
+	// Close the broken connection if still open
+	if s.wsConn != nil {
+		s.wsConn.Close()
+		s.wsConn = nil
+	}
+
+	// Try to reconnect with retry logic
+	if reconnectErr := s.connectToServerWithRetry(); reconnectErr != nil {
+		return fmt.Errorf("failed to reconnect: %v", reconnectErr)
+	}
+
+	fmt.Println("✓ Reconnected successfully")
+
+	// If we're not using local tokens, request a new token after reconnection
+	if !s.useLocalToken {
+		fmt.Println("Requesting new AWS credentials...")
+		if tokenErr := s.requestToken(); tokenErr != nil {
+			fmt.Printf("⚠ Failed to obtain token after reconnect: %v\n", tokenErr)
+			return fmt.Errorf("failed to obtain token: %v", tokenErr)
+		}
+	}
+
+	return nil
 }
 
 // connectToServer establishes connection to the server
@@ -529,23 +582,13 @@ func (s *SpeechToText) readMessages() {
 			fmt.Printf("WebSocket connection lost: %v\n", err)
 			fmt.Println("Attempting to reconnect...")
 
-			// Try to reconnect with retry logic
-			if reconnectErr := s.connectToServerWithRetry(); reconnectErr != nil {
-				log.Printf("Failed to reconnect: %v", reconnectErr)
+			// Handle reconnection and token refresh
+			if reconnectErr := s.handleWebSocketReconnection(); reconnectErr != nil {
+				log.Printf("Reconnection failed: %v", reconnectErr)
 				fmt.Println("\n✖ Unable to reconnect to server. Exiting...")
 				// Signal the application to stop
 				s.GracefulStop()
 				return
-			}
-
-			fmt.Println("✓ Reconnected successfully")
-
-			// If we're not using local tokens, request a new token after reconnection
-			if !s.useLocalToken {
-				fmt.Println("Requesting new AWS credentials...")
-				if tokenErr := s.requestToken(); tokenErr != nil {
-					log.Printf("Failed to obtain token after reconnect: %v", tokenErr)
-				}
 			}
 
 			// Continue reading messages from the new connection
@@ -875,6 +918,15 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 									// Send WebSocket message
 									if err := s.sendMessage(MessageTypeNewText, data); err != nil {
 										log.Printf("Failed to send message: %v", err)
+										// Check if the error indicates a closed/broken websocket connection
+										if isWebSocketClosedError(err) {
+											// Handle reconnection and token refresh
+											fmt.Println("⚠ WebSocket connection broken. Attempting to reconnect...")
+											if reconnectErr := s.handleWebSocketReconnection(); reconnectErr != nil {
+												log.Printf("Reconnection failed: %v", reconnectErr)
+												fmt.Printf("⚠ Unable to reconnect to server. Transcription will continue but messages won't be sent.\n")
+											}
+										}
 									}
 								} else {
 									fmt.Println("⚠ Not connected to server. Attempting to reconnect...")

@@ -255,3 +255,72 @@ func TestMaxTokenRefreshRetriesConstant(t *testing.T) {
 		t.Errorf("maxTokenRefreshRetries = %d, want 3", maxTokenRefreshRetries)
 	}
 }
+
+// TestIsWebSocketClosedError tests the websocket closed error detection
+func TestIsWebSocketClosedError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{
+			name:     "nil error",
+			err:      nil,
+			expected: false,
+		},
+		{
+			name:     "websocket close sent",
+			err:      fmt.Errorf("websocket: close sent"),
+			expected: true,
+		},
+		{
+			name:     "websocket close received",
+			err:      fmt.Errorf("websocket: close received"),
+			expected: true,
+		},
+		{
+			name:     "use of closed network connection",
+			err:      fmt.Errorf("write: use of closed network connection"),
+			expected: true,
+		},
+		{
+			name:     "broken pipe",
+			err:      fmt.Errorf("write: broken pipe"),
+			expected: true,
+		},
+		{
+			name:     "connection reset by peer",
+			err:      fmt.Errorf("write: connection reset by peer"),
+			expected: true,
+		},
+		{
+			name:     "websocket connection closed",
+			err:      fmt.Errorf("websocket: connection closed"),
+			expected: true,
+		},
+		{
+			name:     "case insensitive - WebSocket: Close Sent",
+			err:      fmt.Errorf("WebSocket: Close Sent"),
+			expected: true,
+		},
+		{
+			name:     "unrelated error",
+			err:      fmt.Errorf("connection timeout"),
+			expected: false,
+		},
+		{
+			name:     "different error",
+			err:      fmt.Errorf("invalid json"),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := isWebSocketClosedError(tt.err)
+			if result != tt.expected {
+				t.Errorf("isWebSocketClosedError(%v) = %v, want %v", tt.err, result, tt.expected)
+			}
+		})
+	}
+}
