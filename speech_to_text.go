@@ -84,12 +84,12 @@ var (
 	}
 
 	websocketClosedPatterns = []string{
-		"websocket: close sent",           // Websocket already closed
-		"websocket: close received",       // Received close frame
+		"websocket: close sent",            // Websocket already closed
+		"websocket: close received",        // Received close frame
 		"use of closed network connection", // Network connection closed
-		"broken pipe",                     // Broken connection
-		"connection reset by peer",        // Connection reset
-		"websocket: connection closed",    // Connection closed
+		"broken pipe",                      // Broken connection
+		"connection reset by peer",         // Connection reset
+		"websocket: connection closed",     // Connection closed
 	}
 )
 
@@ -809,19 +809,42 @@ func (s *SpeechToText) listenAndTranscribe() error {
 	// Retry loop for handling token expiration
 	// Initial attempt + up to maxTokenRefreshRetries retry attempts
 	tokenRefreshRetries := 0
+	var streamCtx context.Context
+	var cancelStream context.CancelFunc
+
 	for {
 		// Check for shutdown
 		select {
 		case <-s.shutdownRequested:
+			if cancelStream != nil {
+				cancelStream()
+			}
 			return nil
 		case <-s.ctx.Done():
+			if cancelStream != nil {
+				cancelStream()
+			}
 			return nil
 		default:
 		}
 
+		// Cancel previous stream if this is a retry
+		if cancelStream != nil {
+			if s.verbose {
+				fmt.Println("Cancelling previous transcription stream...")
+			}
+			cancelStream()
+			// Give goroutines time to cleanup
+			time.Sleep(100 * time.Millisecond)
+		}
+
+		// Create a new context for this transcription attempt
+		streamCtx, cancelStream = context.WithCancel(s.ctx)
+
 		// Get AWS config (refresh on each retry to pick up new token)
 		cfg, err := s.getAWSConfig()
 		if err != nil {
+			cancelStream()
 			return fmt.Errorf("failed to get AWS config: %v", err)
 		}
 
@@ -829,21 +852,24 @@ func (s *SpeechToText) listenAndTranscribe() error {
 		transcribeClient := transcribestreaming.NewFromConfig(cfg)
 		s.transcribeClient = transcribeClient
 
-		// Start AWS Transcribe streaming session
-		err = s.startTranscribeStream(buffer)
+		// Start AWS Transcribe streaming session with the stream-specific context
+		err = s.startTranscribeStream(streamCtx, buffer)
 		if err == nil {
+			cancelStream() // Clean up on successful completion
 			return nil
 		}
 
 		// Check if the error is due to an expired token
 		if !isTokenExpiredError(err) {
-			// For non-token errors, return the error immediately
+			// For non-token errors, cancel and return immediately
+			cancelStream()
 			return err
 		}
 
 		// Token error detected - check if we can retry
 		tokenRefreshRetries++
 		if tokenRefreshRetries > maxTokenRefreshRetries {
+			cancelStream()
 			return fmt.Errorf("max token refresh retries (%d) exceeded: %v", maxTokenRefreshRetries, err)
 		}
 
@@ -864,7 +890,7 @@ func (s *SpeechToText) listenAndTranscribe() error {
 			fmt.Println("⚠ Using local AWS credentials. Restarting transcription...")
 		}
 
-		// Small delay before restarting
+		// Small delay before restarting to allow cleanup
 		time.Sleep(500 * time.Millisecond)
 	}
 }
@@ -872,9 +898,9 @@ func (s *SpeechToText) listenAndTranscribe() error {
 // startTranscribeStream starts a streaming transcription session with AWS Transcribe
 
 // startTranscribeStream starts a streaming transcription session with AWS Transcribe
-func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
+func (s *SpeechToText) startTranscribeStream(streamCtx context.Context, buffer []int16) error {
 	// Start transcription stream
-	stream, err := s.transcribeClient.StartStreamTranscription(s.ctx, &transcribestreaming.StartStreamTranscriptionInput{
+	stream, err := s.transcribeClient.StartStreamTranscription(streamCtx, &transcribestreaming.StartStreamTranscriptionInput{
 		LanguageCode:         types.LanguageCodeEnUs,
 		MediaSampleRateHertz: aws.Int32(sampleRate),
 		MediaEncoding:        types.MediaEncodingPcm,
@@ -962,7 +988,7 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 	go func() {
 		for {
 			select {
-			case <-s.ctx.Done():
+			case <-streamCtx.Done():
 				// Context cancelled; close event stream and exit
 				eventStream.Close()
 				return
@@ -992,7 +1018,7 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 				audioBytes := int16ToBytes(buffer)
 
 				// Send audio to transcription service
-				err := eventStream.Send(s.ctx, &types.AudioStreamMemberAudioEvent{
+				err := eventStream.Send(streamCtx, &types.AudioStreamMemberAudioEvent{
 					Value: types.AudioEvent{
 						AudioChunk: audioBytes,
 					},
