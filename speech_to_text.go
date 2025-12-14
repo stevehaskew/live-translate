@@ -84,12 +84,12 @@ var (
 	}
 
 	websocketClosedPatterns = []string{
-		"websocket: close sent",           // Websocket already closed
-		"websocket: close received",       // Received close frame
+		"websocket: close sent",            // Websocket already closed
+		"websocket: close received",        // Received close frame
 		"use of closed network connection", // Network connection closed
-		"broken pipe",                     // Broken connection
-		"connection reset by peer",        // Connection reset
-		"websocket: connection closed",    // Connection closed
+		"broken pipe",                      // Broken connection
+		"connection reset by peer",         // Connection reset
+		"websocket: connection closed",     // Connection closed
 	}
 )
 
@@ -809,19 +809,54 @@ func (s *SpeechToText) listenAndTranscribe() error {
 	// Retry loop for handling token expiration
 	// Initial attempt + up to maxTokenRefreshRetries retry attempts
 	tokenRefreshRetries := 0
+	var streamCtx context.Context
+	var cancelStream context.CancelFunc
+	var cleanupStream func()
+
 	for {
 		// Check for shutdown
 		select {
 		case <-s.shutdownRequested:
+			if cancelStream != nil {
+				cancelStream()
+				if cleanupStream != nil {
+					cleanupStream()
+				}
+			}
 			return nil
 		case <-s.ctx.Done():
+			if cancelStream != nil {
+				cancelStream()
+				if cleanupStream != nil {
+					cleanupStream()
+				}
+			}
 			return nil
 		default:
 		}
 
+		// Cancel previous stream if this is a retry
+		if cancelStream != nil {
+			if s.verbose {
+				fmt.Println("Cancelling previous transcription stream...")
+			}
+			cancelStream()
+			// Wait for goroutines to complete cleanup
+			if cleanupStream != nil {
+				cleanupStream()
+			}
+		}
+
+		// Create a new context for this transcription attempt
+		streamCtx, cancelStream = context.WithCancel(s.ctx)
+
 		// Get AWS config (refresh on each retry to pick up new token)
 		cfg, err := s.getAWSConfig()
 		if err != nil {
+			cancelStream()
+			if cleanupStream != nil {
+				cleanupStream()
+			}
 			return fmt.Errorf("failed to get AWS config: %v", err)
 		}
 
@@ -829,21 +864,50 @@ func (s *SpeechToText) listenAndTranscribe() error {
 		transcribeClient := transcribestreaming.NewFromConfig(cfg)
 		s.transcribeClient = transcribeClient
 
-		// Start AWS Transcribe streaming session
-		err = s.startTranscribeStream(buffer)
+		// Start AWS Transcribe streaming session with the stream-specific context
+		cleanupStream, err = s.startTranscribeStream(streamCtx, buffer)
 		if err == nil {
+			// Clean up on successful completion
+			cancelStream()
+			if cleanupStream != nil {
+				cleanupStream()
+			}
 			return nil
 		}
 
 		// Check if the error is due to an expired token
 		if !isTokenExpiredError(err) {
-			// For non-token errors, return the error immediately
-			return err
+			// Check if this is due to shutdown/cancellation
+			select {
+			case <-s.shutdownRequested:
+				cancelStream()
+				if cleanupStream != nil {
+					cleanupStream()
+				}
+				return nil
+			case <-s.ctx.Done():
+				cancelStream()
+				if cleanupStream != nil {
+					cleanupStream()
+				}
+				return nil
+			default:
+				// For non-token errors, cancel and return immediately
+				cancelStream()
+				if cleanupStream != nil {
+					cleanupStream()
+				}
+				return err
+			}
 		}
 
 		// Token error detected - check if we can retry
 		tokenRefreshRetries++
 		if tokenRefreshRetries > maxTokenRefreshRetries {
+			cancelStream()
+			if cleanupStream != nil {
+				cleanupStream()
+			}
 			return fmt.Errorf("max token refresh retries (%d) exceeded: %v", maxTokenRefreshRetries, err)
 		}
 
@@ -864,23 +928,21 @@ func (s *SpeechToText) listenAndTranscribe() error {
 			fmt.Println("⚠ Using local AWS credentials. Restarting transcription...")
 		}
 
-		// Small delay before restarting
+		// Small delay before retrying after token refresh
 		time.Sleep(500 * time.Millisecond)
 	}
 }
 
 // startTranscribeStream starts a streaming transcription session with AWS Transcribe
-
-// startTranscribeStream starts a streaming transcription session with AWS Transcribe
-func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
+func (s *SpeechToText) startTranscribeStream(streamCtx context.Context, buffer []int16) (func(), error) {
 	// Start transcription stream
-	stream, err := s.transcribeClient.StartStreamTranscription(s.ctx, &transcribestreaming.StartStreamTranscriptionInput{
+	stream, err := s.transcribeClient.StartStreamTranscription(streamCtx, &transcribestreaming.StartStreamTranscriptionInput{
 		LanguageCode:         types.LanguageCodeEnUs,
 		MediaSampleRateHertz: aws.Int32(sampleRate),
 		MediaEncoding:        types.MediaEncodingPcm,
 	})
 	if err != nil {
-		return fmt.Errorf("failed to start transcription stream: %v", err)
+		return nil, fmt.Errorf("failed to start transcription stream: %v", err)
 	}
 
 	// Get the event stream
@@ -889,9 +951,13 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 	// Channel to signal completion
 	done := make(chan error, 1)
 
+	// WaitGroup to track goroutine cleanup
+	var wg sync.WaitGroup
+
 	// Start goroutine to handle transcription results
+	wg.Add(1)
 	go func() {
-		defer close(done)
+		defer wg.Done()
 
 		for event := range eventStream.Events() {
 			switch e := event.(type) {
@@ -950,19 +1016,28 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 		// Check for errors
 		if err := eventStream.Err(); err != nil {
 			// Wrap token expiration errors for proper handling upstream
+			var errToSend error
 			if isTokenExpiredError(err) {
-				done <- &TokenExpiredError{Err: err}
+				errToSend = &TokenExpiredError{Err: err}
 			} else {
-				done <- err
+				errToSend = err
+			}
+			// Non-blocking send to done channel
+			select {
+			case done <- errToSend:
+			case <-streamCtx.Done():
+				// Context cancelled, don't block on send
 			}
 		}
 	}()
 
 	// Main audio capture loop
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			select {
-			case <-s.ctx.Done():
+			case <-streamCtx.Done():
 				// Context cancelled; close event stream and exit
 				eventStream.Close()
 				return
@@ -992,7 +1067,7 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 				audioBytes := int16ToBytes(buffer)
 
 				// Send audio to transcription service
-				err := eventStream.Send(s.ctx, &types.AudioStreamMemberAudioEvent{
+				err := eventStream.Send(streamCtx, &types.AudioStreamMemberAudioEvent{
 					Value: types.AudioEvent{
 						AudioChunk: audioBytes,
 					},
@@ -1000,7 +1075,12 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 				if err != nil {
 					// Check if this is a token expiration error - if so, signal it
 					if isTokenExpiredError(err) {
-						done <- &TokenExpiredError{Err: err}
+						// Non-blocking send to done channel
+						select {
+						case done <- &TokenExpiredError{Err: err}:
+						case <-streamCtx.Done():
+							// Context cancelled, don't block on send
+						}
 						eventStream.Close()
 						return
 					}
@@ -1017,17 +1097,33 @@ func (s *SpeechToText) startTranscribeStream(buffer []int16) error {
 		}
 	}()
 
-	// Wait for completion or error
-	err = <-done
-	if err != nil {
-		// Preserve token expired error type for proper handling upstream
-		if tokenErr, ok := err.(*TokenExpiredError); ok {
-			return tokenErr
-		}
-		return fmt.Errorf("transcription error: %v", err)
+	// Wait for completion or error, or context cancellation
+	select {
+	case err = <-done:
+		// Error received from one of the goroutines
+	case <-streamCtx.Done():
+		// Context was cancelled before completion
+		err = streamCtx.Err()
 	}
 
-	return nil
+	// Create cleanup function that waits for goroutines to finish
+	cleanup := func() {
+		wg.Wait()
+	}
+
+	if err != nil {
+		// Check if this is a normal context cancellation (clean shutdown)
+		if err == context.Canceled {
+			return cleanup, nil
+		}
+		// Preserve token expired error type for proper handling upstream
+		if tokenErr, ok := err.(*TokenExpiredError); ok {
+			return cleanup, tokenErr
+		}
+		return cleanup, fmt.Errorf("transcription error: %v", err)
+	}
+
+	return cleanup, nil
 }
 
 // Run executes the main application logic
