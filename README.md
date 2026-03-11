@@ -280,6 +280,7 @@ The application supports translation to the following languages:
 - Dutch (nl)
 - Polish (pl)
 - Turkish (tr)
+- Greek (el)
 
 ## How It Works
 
