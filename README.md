@@ -53,13 +53,21 @@ The application uses websockets for real-time communication between all componen
 
 ### For the Speech-to-Text Client
 
-- Go 1.25+ (for building from source)
+- Go 1.24+ (for building from source)
 - PortAudio library
   - **Linux**: `sudo apt-get install portaudio19-dev`
   - **macOS**: `brew install portaudio`
   - **Windows**: Download from [PortAudio website](http://www.portaudio.com/)
-- AWS credentials for Transcribe Streaming API
+- CMake 3.14+ (for building whisper.cpp, only needed when building from source)
 - Microphone/Audio Input Device (for speech input)
+
+#### Local STT (default — no cloud costs)
+- No AWS credentials required
+- A whisper.cpp model file (~78-148 MB) — **auto-downloaded on first run** to `~/.yot/models/`
+- No internet connection required after model download
+
+#### AWS Transcribe STT (optional)
+- AWS credentials for Transcribe Streaming API
 - Internet connection (for speech recognition API)
 
 ## Installation
@@ -89,14 +97,11 @@ brew install portaudio
 
 **Build from source**:
 ```bash
-# Install Go 1.19+ if not already installed
+# Install Go 1.24+ if not already installed
 # https://golang.org/dl/
 
-# Build the client
+# Build the client (clones whisper.cpp and builds it automatically)
 make build
-
-# Or build manually
-go build -o speech_to_text_go speech_to_text.go
 
 # The executable will be created: ./speech_to_text_go
 ```
@@ -110,6 +115,15 @@ make build-all
 make build-linux    # Linux (amd64)
 make build-darwin   # macOS (amd64 and arm64)
 make build-windows  # Windows (amd64)
+```
+
+**Download whisper model** (optional — auto-downloads on first run):
+```bash
+# Download the default model (base.en, ~148 MB)
+make download-model
+
+# Download a smaller/faster model
+MODEL_SIZE=tiny.en make download-model
 ```
 
 ### 4. Configure environment variables
@@ -210,13 +224,18 @@ You can open multiple browser windows/tabs to simulate multiple users with diffe
 In another terminal window, start the speech-to-text client:
 
 ```bash
+# Default: uses local whisper.cpp (auto-downloads model on first run)
 ./speech_to_text_go
+
+# Or use AWS Transcribe instead
+./speech_to_text_go --engine=aws
 ```
 
 The client will:
-1. Connect to the web server
-2. Calibrate the microphone for ambient noise
-3. Start listening for speech
+1. (Local engine only) Download the whisper model to `~/.yot/models/` if not already present
+2. Connect to the web server
+3. Calibrate the microphone for ambient noise
+4. Start listening for speech
 
 Now speak into your microphone, and the text will appear in real-time on all connected web clients, translated to their selected languages.
 
@@ -233,8 +252,17 @@ FLASK_HOST=0.0.0.0 FLASK_PORT=5050 python server.py
 # List available audio input devices
 ./speech_to_text_go -l
 
-# Connect to default server with default audio device
+# Connect to default server with default audio device (local whisper engine)
 ./speech_to_text_go
+
+# Use AWS Transcribe instead of local whisper
+./speech_to_text_go --engine=aws
+
+# Use a smaller/faster whisper model
+./speech_to_text_go --model-size=tiny.en
+
+# Use a custom whisper model file
+./speech_to_text_go --model /path/to/ggml-medium.en.bin
 
 # Connect to a remote server
 ./speech_to_text_go http://example.com:5050
@@ -247,6 +275,9 @@ FLASK_HOST=0.0.0.0 FLASK_PORT=5050 python server.py
 
 # Use a specific device with a remote server
 ./speech_to_text_go -d 1 http://example.com:5050
+
+# Set engine and model via environment variables
+LT_ENGINE=local LT_WHISPER_MODEL_SIZE=tiny.en ./speech_to_text_go
 
 # Set default audio device via environment variable (by index)
 LT_AUDIO_DEVICE=1 ./speech_to_text_go

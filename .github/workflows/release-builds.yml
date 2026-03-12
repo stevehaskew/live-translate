@@ -42,12 +42,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.24'
 
       - name: Install PortAudio (Linux)
         if: runner.os == 'Linux'
@@ -67,15 +67,26 @@ jobs:
         run: |
           choco install portaudio -y
 
+      - name: Build whisper.cpp static library
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git build/whisper-src
+          cmake -S build/whisper-src -B build/whisper-src/build \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DWHISPER_BUILD_EXAMPLES=OFF \
+            -DWHISPER_BUILD_TESTS=OFF
+          cmake --build build/whisper-src/build --config Release -j
+
       - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"
+          C_INCLUDE_PATH: ${{ github.workspace }}/build/whisper-src/include:${{ github.workspace }}/build/whisper-src/ggml/include
+          LIBRARY_PATH: ${{ github.workspace }}/build/whisper-src/build/src:${{ github.workspace }}/build/whisper-src/build/ggml/src:${{ github.workspace }}/build/whisper-src/build/ggml/src/ggml-metal:${{ github.workspace }}/build/whisper-src/build/ggml/src/ggml-blas:${{ github.workspace }}/build/whisper-src/build/ggml/src/ggml-cpu
         run: |
           mkdir -p build
           echo "Building $GOOS/$GOARCH -> build/${{ matrix.out }}"
-          # Disable CGO if you want pure-go cross-compiles; keep CGO for native builds
-          go build -o build/${{ matrix.out }} ./speech_to_text.go
+          go build -o build/${{ matrix.out }} .
 
       - name: Create zip (Linux/macOS)
         if: runner.os != 'Windows'

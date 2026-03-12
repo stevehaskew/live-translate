@@ -18,10 +18,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming"
-	"github.com/aws/aws-sdk-go-v2/service/transcribestreaming/types"
 	"github.com/gordonklaus/portaudio"
 	"github.com/gorilla/websocket"
 	"github.com/joho/godotenv"
@@ -148,7 +144,6 @@ type SpeechToText struct {
 	deviceIndex       int
 	wsConn            *websocket.Conn
 	stream            *portaudio.Stream
-	transcribeClient  *transcribestreaming.Client
 	isRunning         bool
 	ctx               context.Context
 	awsRegion         string
@@ -165,10 +160,14 @@ type SpeechToText struct {
 	shutdownOnce      sync.Once
 	retryCount        int // Current retry attempt count
 	retryMutex        sync.Mutex
+	// engine is the pluggable speech-to-text backend (AWS or Whisper)
+	engine     TranscriptionEngine
+	engineName string // "aws" or "local"
+	modelPath  string // resolved whisper model path (local engine only)
 }
 
 // NewSpeechToText creates a new SpeechToText instance
-func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex int, awsRegion string, verbose bool, useLocalToken bool) (*SpeechToText, error) {
+func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex int, awsRegion string, verbose bool, useLocalToken bool, engineName string) (*SpeechToText, error) {
 	return &SpeechToText{
 		ctx:               ctx,
 		serverURL:         serverURL,
@@ -180,6 +179,7 @@ func NewSpeechToText(ctx context.Context, serverURL, apiKey string, deviceIndex 
 		useLocalToken:     useLocalToken,
 		connectedOnce:     false,
 		shutdownRequested: make(chan struct{}),
+		engineName:        engineName,
 	}, nil
 }
 
@@ -409,149 +409,6 @@ func (s *SpeechToText) connectToServer() error {
 	return nil
 }
 
-// requestToken requests a new AWS token from the server via WebSocket
-func (s *SpeechToText) requestToken() error {
-	if s.apiKey == "" {
-		return fmt.Errorf("API key is required for token generation")
-	}
-
-	if s.wsConn == nil {
-		return fmt.Errorf("WebSocket connection not established")
-	}
-
-	// Create a channel to receive the token response
-	tokenChan := make(chan *TokenResponse, 1)
-	errorChan := make(chan error, 1)
-
-	// Set up temporary message handler to capture token response
-	s.tokenResponseChan = tokenChan
-	s.tokenErrorChan = errorChan
-
-	// Send generate_token message
-	message := WSMessage{
-		Type: MessageTypeGenerateToken,
-		Data: map[string]interface{}{
-			"api_key": s.apiKey,
-		},
-	}
-
-	if err := s.wsConn.WriteJSON(message); err != nil {
-		return fmt.Errorf("failed to send token request: %v", err)
-	}
-
-	// Wait for response with timeout
-	select {
-	case tokenResp := <-tokenChan:
-		// Store token
-		s.tokenMutex.Lock()
-		s.currentToken = tokenResp
-		s.tokenMutex.Unlock()
-
-		if s.verbose {
-			fmt.Printf("✓ AWS token obtained (expires: %s, region: %s)\n", tokenResp.Credentials.Expiration, tokenResp.Region)
-		}
-		return nil
-
-	case err := <-errorChan:
-		return fmt.Errorf("token generation failed: %v", err)
-
-	case <-time.After(10 * time.Second):
-		return fmt.Errorf("token request timed out")
-	}
-}
-
-// startTokenRefresher starts a goroutine that refreshes the token periodically
-func (s *SpeechToText) startTokenRefresher() {
-	go func() {
-		ticker := time.NewTicker(tokenRefreshInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-s.ctx.Done():
-				if s.verbose {
-					fmt.Println("Token refresher stopped (context cancelled)")
-				}
-				return
-			case <-s.shutdownRequested:
-				if s.verbose {
-					fmt.Println("Token refresher stopped (shutdown requested)")
-				}
-				return
-			case <-ticker.C:
-				// Always log token refresh attempts (critical for debugging token expiration)
-				if s.verbose {
-					fmt.Printf("⟳ Refreshing AWS token (interval: %v)...\n", tokenRefreshInterval)
-				}
-				if err := s.requestToken(); err != nil {
-					// Always log errors
-					log.Printf("✖ Failed to refresh token: %v", err)
-				} else if s.verbose {
-					fmt.Println("✓ Token refreshed successfully")
-				}
-			}
-		}
-	}()
-}
-
-// dynamicCredentialsProvider implements aws.CredentialsProvider
-// It always retrieves the latest token from the SpeechToText instance
-type dynamicCredentialsProvider struct {
-	stt *SpeechToText
-}
-
-// Retrieve implements the aws.CredentialsProvider interface
-func (p *dynamicCredentialsProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
-	p.stt.tokenMutex.RLock()
-	token := p.stt.currentToken
-	p.stt.tokenMutex.RUnlock()
-
-	if token == nil {
-		return aws.Credentials{}, fmt.Errorf("no AWS token available")
-	}
-
-	if p.stt.verbose {
-		fmt.Printf("Using AWS credentials (expires: %s)\n", token.Credentials.Expiration)
-	}
-
-	return aws.Credentials{
-		AccessKeyID:     token.Credentials.AccessKeyId,
-		SecretAccessKey: token.Credentials.SecretAccessKey,
-		SessionToken:    token.Credentials.SessionToken,
-		Source:          "DynamicTokenProvider",
-	}, nil
-}
-
-// getAWSConfig returns AWS config with appropriate credentials
-func (s *SpeechToText) getAWSConfig() (aws.Config, error) {
-	if s.useLocalToken {
-		// Use local AWS credentials
-		if s.verbose {
-			fmt.Println("Using local AWS credentials")
-		}
-		return config.LoadDefaultConfig(s.ctx, config.WithRegion(s.awsRegion))
-	}
-
-	// Use token from server with dynamic provider that refreshes automatically
-	s.tokenMutex.RLock()
-	token := s.currentToken
-	s.tokenMutex.RUnlock()
-
-	if token == nil {
-		return aws.Config{}, fmt.Errorf("no AWS token available")
-	}
-
-	// Create a dynamic credentials provider that always reads the latest token
-	credsProvider := &dynamicCredentialsProvider{stt: s}
-
-	cfg := aws.Config{
-		Region:      token.Region,
-		Credentials: credsProvider,
-	}
-
-	return cfg, nil
-}
-
 // readMessages listens for incoming WebSocket messages
 func (s *SpeechToText) readMessages() {
 	defer func() {
@@ -754,7 +611,7 @@ func int16ToBytes(samples []int16) []byte {
 	return buf.Bytes()
 }
 
-// listenAndTranscribe starts listening and transcribing using AWS Transcribe Streaming
+// listenAndTranscribe starts listening and transcribing using the configured engine.
 func (s *SpeechToText) listenAndTranscribe() error {
 	s.isRunning = true
 	defer func() {
@@ -764,10 +621,17 @@ func (s *SpeechToText) listenAndTranscribe() error {
 	fmt.Println("\n" + strings.Repeat("=", 60))
 	fmt.Println("SPEECH-TO-TEXT LIVE TRANSLATION")
 	fmt.Println(strings.Repeat("=", 60))
+	if s.engineName == "local" {
+		fmt.Printf("Engine : Local (whisper.cpp)\n")
+		fmt.Printf("Model  : %s\n", filepath.Base(s.modelPath))
+	} else {
+		fmt.Printf("Engine : AWS Transcribe Streaming\n")
+		fmt.Printf("Region : %s\n", s.awsRegion)
+	}
 	fmt.Println("\nListening... Speak into your microphone.")
 	fmt.Println("Press Ctrl+C to stop.")
 
-	// Get device info (do this once, outside the retry loop)
+	// Get device info
 	var device *portaudio.DeviceInfo
 	var err error
 	if s.deviceIndex >= 0 {
@@ -794,342 +658,120 @@ func (s *SpeechToText) listenAndTranscribe() error {
 
 	// Open audio stream
 	buffer := make([]int16, framesPerBuffer)
-	stream, err := portaudio.OpenStream(params, buffer)
+	paStream, err := portaudio.OpenStream(params, buffer)
 	if err != nil {
 		return fmt.Errorf("failed to open stream: %v", err)
 	}
-	s.stream = stream
-	defer stream.Close()
+	s.stream = paStream
+	defer paStream.Close()
 
-	if err := stream.Start(); err != nil {
+	if err := paStream.Start(); err != nil {
 		return fmt.Errorf("failed to start stream: %v", err)
 	}
-	defer stream.Stop()
+	defer paStream.Stop()
 
-	// Retry loop for handling token expiration
-	// Initial attempt + up to maxTokenRefreshRetries retry attempts
-	tokenRefreshRetries := 0
-	var streamCtx context.Context
-	var cancelStream context.CancelFunc
-	var cleanupStream func()
+	// Create a cancellable context for the engine
+	engineCtx, cancelEngine := context.WithCancel(s.ctx)
+	defer cancelEngine()
 
-	for {
-		// Check for shutdown
-		select {
-		case <-s.shutdownRequested:
-			if cancelStream != nil {
-				cancelStream()
-				if cleanupStream != nil {
-					cleanupStream()
-				}
-			}
-			return nil
-		case <-s.ctx.Done():
-			if cancelStream != nil {
-				cancelStream()
-				if cleanupStream != nil {
-					cleanupStream()
-				}
-			}
-			return nil
-		default:
-		}
+	// Audio channel — PortAudio reads are pushed here
+	audioIn := make(chan []int16, 32)
 
-		// Cancel previous stream if this is a retry
-		if cancelStream != nil {
-			if s.verbose {
-				fmt.Println("Cancelling previous transcription stream...")
-			}
-			cancelStream()
-			// Wait for goroutines to complete cleanup
-			if cleanupStream != nil {
-				cleanupStream()
-			}
-		}
-
-		// Create a new context for this transcription attempt
-		streamCtx, cancelStream = context.WithCancel(s.ctx)
-
-		// Get AWS config (refresh on each retry to pick up new token)
-		cfg, err := s.getAWSConfig()
-		if err != nil {
-			cancelStream()
-			if cleanupStream != nil {
-				cleanupStream()
-			}
-			return fmt.Errorf("failed to get AWS config: %v", err)
-		}
-
-		// Create AWS Transcribe Streaming client
-		transcribeClient := transcribestreaming.NewFromConfig(cfg)
-		s.transcribeClient = transcribeClient
-
-		// Start AWS Transcribe streaming session with the stream-specific context
-		cleanupStream, err = s.startTranscribeStream(streamCtx, buffer)
-		if err == nil {
-			// Clean up on successful completion
-			cancelStream()
-			if cleanupStream != nil {
-				cleanupStream()
-			}
-			return nil
-		}
-
-		// Check if the error is due to an expired token
-		if !isTokenExpiredError(err) {
-			// Check if this is due to shutdown/cancellation
-			select {
-			case <-s.shutdownRequested:
-				cancelStream()
-				if cleanupStream != nil {
-					cleanupStream()
-				}
-				return nil
-			case <-s.ctx.Done():
-				cancelStream()
-				if cleanupStream != nil {
-					cleanupStream()
-				}
-				return nil
-			default:
-				// For non-token errors, cancel and return immediately
-				cancelStream()
-				if cleanupStream != nil {
-					cleanupStream()
-				}
-				return err
-			}
-		}
-
-		// Token error detected - check if we can retry
-		tokenRefreshRetries++
-		if tokenRefreshRetries > maxTokenRefreshRetries {
-			cancelStream()
-			if cleanupStream != nil {
-				cleanupStream()
-			}
-			return fmt.Errorf("max token refresh retries (%d) exceeded: %v", maxTokenRefreshRetries, err)
-		}
-
-		fmt.Printf("\n⚠ AWS token expired. Refreshing token (attempt %d/%d)...\n", tokenRefreshRetries, maxTokenRefreshRetries)
-
-		// Request a new token from the server
-		if !s.useLocalToken && s.wsConn != nil {
-			if tokenErr := s.requestToken(); tokenErr != nil {
-				log.Printf("Failed to refresh token: %v", tokenErr)
-				// Wait a bit before retrying
-				time.Sleep(2 * time.Second)
-				continue
-			}
-			fmt.Println("✓ Token refreshed successfully. Restarting transcription...")
-		} else if s.useLocalToken {
-			// For local tokens, the AWS SDK should handle refresh automatically
-			// but we still retry in case of transient issues
-			fmt.Println("⚠ Using local AWS credentials. Restarting transcription...")
-		}
-
-		// Small delay before retrying after token refresh
-		time.Sleep(500 * time.Millisecond)
-	}
-}
-
-// startTranscribeStream starts a streaming transcription session with AWS Transcribe
-func (s *SpeechToText) startTranscribeStream(streamCtx context.Context, buffer []int16) (func(), error) {
-	// Start transcription stream
-	stream, err := s.transcribeClient.StartStreamTranscription(streamCtx, &transcribestreaming.StartStreamTranscriptionInput{
-		LanguageCode:         types.LanguageCodeEnUs,
-		MediaSampleRateHertz: aws.Int32(sampleRate),
-		MediaEncoding:        types.MediaEncodingPcm,
-	})
+	// Start the engine
+	textOut, err := s.engine.Start(engineCtx, audioIn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start transcription stream: %v", err)
+		return fmt.Errorf("failed to start transcription engine: %v", err)
 	}
 
-	// Get the event stream
-	eventStream := stream.GetStream()
-
-	// Channel to signal completion
-	done := make(chan error, 1)
-
-	// WaitGroup to track goroutine cleanup
-	var wg sync.WaitGroup
-
-	// Start goroutine to handle transcription results
-	wg.Add(1)
+	// Goroutine: read PortAudio → audioIn channel
 	go func() {
-		defer wg.Done()
-
-		for event := range eventStream.Events() {
-			switch e := event.(type) {
-			case *types.TranscriptResultStreamMemberTranscriptEvent:
-				// Process transcription results
-				for _, result := range e.Value.Transcript.Results {
-					if !result.IsPartial {
-						// Only process final results
-						if len(result.Alternatives) > 0 && result.Alternatives[0].Transcript != nil {
-							transcript := *result.Alternatives[0].Transcript
-							if strings.TrimSpace(transcript) != "" {
-								timestamp := time.Now().Format("15:04:05")
-								fmt.Printf("[%s] Recognized: %s\n", timestamp, transcript)
-
-								// Broadcast to server
-								if s.wsConn != nil {
-									data := map[string]interface{}{
-										"text":      transcript,
-										"timestamp": timestamp,
-									}
-									if s.apiKey != "" {
-										data["api_key"] = s.apiKey
-									}
-									// Send WebSocket message
-									if err := s.sendMessage(MessageTypeNewText, data); err != nil {
-										log.Printf("Failed to send message: %v", err)
-										// Check if the error indicates a closed/broken websocket connection
-										if isWebSocketClosedError(err) {
-											// Handle reconnection and token refresh
-											fmt.Println("⚠ WebSocket connection broken. Attempting to reconnect...")
-											if reconnectErr := s.handleWebSocketReconnection(); reconnectErr != nil {
-												log.Printf("Reconnection failed: %v", reconnectErr)
-												fmt.Printf("⚠ Unable to reconnect to server. Transcription will continue but messages won't be sent.\n")
-											}
-										}
-									}
-								} else {
-									fmt.Println("⚠ Not connected to server. Attempting to reconnect...")
-									if err := s.connectToServerWithRetry(); err != nil {
-										log.Printf("Failed to reconnect: %v", err)
-									}
-								}
-							}
-						}
-					}
-				}
-			default:
-				// Handle other event types if needed
-			}
-
-			if !s.isRunning {
-				return
-			}
-		}
-
-		// Check for errors
-		if err := eventStream.Err(); err != nil {
-			// Wrap token expiration errors for proper handling upstream
-			var errToSend error
-			if isTokenExpiredError(err) {
-				errToSend = &TokenExpiredError{Err: err}
-			} else {
-				errToSend = err
-			}
-			// Non-blocking send to done channel
-			select {
-			case done <- errToSend:
-			case <-streamCtx.Done():
-				// Context cancelled, don't block on send
-			}
-		}
-	}()
-
-	// Main audio capture loop
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+		defer close(audioIn)
 		for {
 			select {
-			case <-streamCtx.Done():
-				// Context cancelled; close event stream and exit
-				eventStream.Close()
+			case <-engineCtx.Done():
 				return
 			case <-s.shutdownRequested:
-				// Graceful shutdown requested: perform one final read/send if possible
-				if s.stream != nil {
-					if err := s.stream.Read(); err == nil {
-						audioBytes := int16ToBytes(buffer)
-						// Use background context for the final send so it can complete
-						if err := eventStream.Send(context.Background(), &types.AudioStreamMemberAudioEvent{
-							Value: types.AudioEvent{AudioChunk: audioBytes},
-						}); err != nil {
-							log.Printf("Error sending final audio chunk: %v", err)
-						}
-					}
-				}
-				eventStream.Close()
+				// Stream has already been stopped in GracefulStop; just exit.
 				return
 			default:
-				// Read audio data
 				if err := s.stream.Read(); err != nil {
-					log.Printf("Error reading from stream: %v", err)
-					continue
-				}
-
-				// Convert int16 buffer to bytes
-				audioBytes := int16ToBytes(buffer)
-
-				// Send audio to transcription service
-				err := eventStream.Send(streamCtx, &types.AudioStreamMemberAudioEvent{
-					Value: types.AudioEvent{
-						AudioChunk: audioBytes,
-					},
-				})
-				if err != nil {
-					// Check if this is a token expiration error - if so, signal it
-					if isTokenExpiredError(err) {
-						// Non-blocking send to done channel
-						select {
-						case done <- &TokenExpiredError{Err: err}:
-						case <-streamCtx.Done():
-							// Context cancelled, don't block on send
-						}
-						eventStream.Close()
-						return
-					}
-					log.Printf("Error sending audio: %v", err)
-					// If we get an error and shutdown was requested, exit
+					// If shutdown was requested the stream was stopped intentionally;
+					// exit cleanly without logging noise.
 					select {
 					case <-s.shutdownRequested:
-						eventStream.Close()
 						return
 					default:
 					}
+					log.Printf("Error reading from stream: %v", err)
+					continue
+				}
+				chunk := make([]int16, len(buffer))
+				copy(chunk, buffer)
+				select {
+				case audioIn <- chunk:
+				case <-engineCtx.Done():
+					return
 				}
 			}
 		}
 	}()
 
-	// Wait for completion or error, or context cancellation
-	select {
-	case err = <-done:
-		// Error received from one of the goroutines
-	case <-streamCtx.Done():
-		// Context was cancelled before completion
-		err = streamCtx.Err()
-	}
+	// Read transcripts from engine → send to server.
+	// Use a select so context cancellation can break the loop even if the
+	// engine channel is slow to close (e.g. blocked inside whisper inference).
+loop:
+	for {
+		select {
+		case text, ok := <-textOut:
+			if !ok {
+				break loop
+			}
+			timestamp := time.Now().Format("15:04:05")
+			fmt.Printf("[%s] Recognized: %s\n", timestamp, text)
 
-	// Create cleanup function that waits for goroutines to finish
-	cleanup := func() {
-		wg.Wait()
-	}
-
-	if err != nil {
-		// Check if this is a normal context cancellation (clean shutdown)
-		if err == context.Canceled {
-			return cleanup, nil
+			// Broadcast to server
+			if s.wsConn != nil {
+				data := map[string]interface{}{
+					"text":      text,
+					"timestamp": timestamp,
+				}
+				if s.apiKey != "" {
+					data["api_key"] = s.apiKey
+				}
+				if err := s.sendMessage(MessageTypeNewText, data); err != nil {
+					log.Printf("Failed to send message: %v", err)
+					if isWebSocketClosedError(err) {
+						// Don't attempt reconnection during shutdown
+						if engineCtx.Err() != nil {
+							break loop
+						}
+						fmt.Println("⚠ WebSocket connection broken. Attempting to reconnect...")
+						if reconnectErr := s.handleWebSocketReconnection(); reconnectErr != nil {
+							log.Printf("Reconnection failed: %v", reconnectErr)
+							fmt.Println("⚠ Unable to reconnect. Transcription continues but messages won't be sent.")
+						}
+					}
+				}
+			} else {
+				if engineCtx.Err() == nil {
+					fmt.Println("⚠ Not connected to server. Attempting to reconnect...")
+					if err := s.connectToServerWithRetry(); err != nil {
+						log.Printf("Failed to reconnect: %v", err)
+					}
+				}
+			}
+		case <-engineCtx.Done():
+			break loop
 		}
-		// Preserve token expired error type for proper handling upstream
-		if tokenErr, ok := err.(*TokenExpiredError); ok {
-			return cleanup, tokenErr
-		}
-		return cleanup, fmt.Errorf("transcription error: %v", err)
 	}
 
-	return cleanup, nil
+	return nil
 }
 
 // Run executes the main application logic
 func (s *SpeechToText) Run() error {
 	// Check API key configuration
-	if s.apiKey == "" && !s.useLocalToken {
+	if s.apiKey == "" && s.engineName == "aws" && !s.useLocalToken {
 		fmt.Println("\n⚠ Warning: API_KEY not set in environment.")
 		fmt.Println("Communication with the server will not be secured.")
 		fmt.Println("Token generation will not be available.")
@@ -1139,7 +781,6 @@ func (s *SpeechToText) Run() error {
 	// Connect to server with retry logic
 	if err := s.connectToServerWithRetry(); err != nil {
 		fmt.Println("\n⚠ Warning: Could not connect to server after multiple attempts.")
-		// When verbose, show the underlying error and helpful troubleshooting hints
 		if s.verbose {
 			fmt.Fprintf(os.Stderr, "Connection error details: %v\n", err)
 		}
@@ -1153,8 +794,8 @@ func (s *SpeechToText) Run() error {
 		}
 	}
 
-	// Request AWS credentials token if not using local credentials
-	if !s.useLocalToken && s.wsConn != nil {
+	// Request AWS credentials token if using AWS engine and not using local credentials
+	if s.engineName == "aws" && !s.useLocalToken && s.wsConn != nil {
 		fmt.Println("Requesting AWS credentials from server...")
 		if err := s.requestToken(); err != nil {
 			return fmt.Errorf("failed to obtain AWS token: %v", err)
@@ -1175,6 +816,9 @@ func (s *SpeechToText) Run() error {
 	}
 
 	// Cleanup
+	if s.engine != nil {
+		s.engine.Close()
+	}
 	if s.wsConn != nil {
 		s.wsConn.Close()
 	}
@@ -1194,6 +838,12 @@ func (s *SpeechToText) GracefulStop() {
 	s.connMu.Lock()
 	s.isRunning = false
 	s.connMu.Unlock()
+
+	// Stop the PortAudio stream immediately so any blocked Read() call returns.
+	// This unblocks the audio goroutine without waiting for the next buffer.
+	if s.stream != nil {
+		s.stream.Stop()
+	}
 
 	// Attempt a polite WebSocket close so the remote end knows we're shutting down.
 	if s.wsConn != nil {
@@ -1218,6 +868,9 @@ func main() {
 	deviceSpecLong := flag.String("device", "", "Select audio input device by index or name")
 	verboseShort := flag.Bool("v", false, "Enable verbose debug logging")
 	verboseLong := flag.Bool("verbose", false, "Enable verbose debug logging")
+	engineFlag := flag.String("engine", "", "STT engine: 'local' (whisper.cpp, default) or 'aws' (AWS Transcribe)")
+	modelFlag := flag.String("model", "", "Path to a whisper.cpp ggml model file (overrides --model-size)")
+	modelSizeFlag := flag.String("model-size", "", "Whisper model size to auto-download: tiny.en, base.en, small.en (default: base.en)")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [server_url]\n\n", os.Args[0])
@@ -1225,13 +878,19 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
-		fmt.Fprintf(os.Stderr, "  %s                              # Use default device and server\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s http://example.com:5050      # Connect to remote server\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -l                           # List available audio devices\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -d 1                         # Use audio device with index 1\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -d \"USB Microphone\"          # Use audio device by name\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  %s -d 1 http://example.com:5050 # Use device 1 with remote server\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s                              # Use default device and server (local whisper)\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --engine=aws                 # Use AWS Transcribe instead of local\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --model-size=tiny.en          # Use smaller/faster whisper model\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s --model /path/to/ggml.bin     # Use a custom whisper model file\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s http://example.com:5050       # Connect to remote server\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -l                            # List available audio devices\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -d 1                          # Use audio device with index 1\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -d \"USB Microphone\"           # Use audio device by name\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "  %s -d 1 http://example.com:5050  # Use device 1 with remote server\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "\nEnvironment Variables:\n")
+		fmt.Fprintf(os.Stderr, "  LT_ENGINE           STT engine: 'local' or 'aws' (default: local)\n")
+		fmt.Fprintf(os.Stderr, "  LT_WHISPER_MODEL    Path to a custom whisper model file\n")
+		fmt.Fprintf(os.Stderr, "  LT_WHISPER_MODEL_SIZE  Model size to auto-download (default: base.en)\n")
 		fmt.Fprintf(os.Stderr, "  LT_AUDIO_DEVICE     Set default audio device (index or name)\n")
 		fmt.Fprintf(os.Stderr, "  LT_LOCAL_TOKEN      Use local AWS credentials instead of server token (true/false)\n")
 		fmt.Fprintf(os.Stderr, "  LT_ENDPOINT         Server endpoint (e.g. wss://api.mychurch.yot.church)\n")
@@ -1309,16 +968,51 @@ func main() {
 	// Check if using local AWS credentials
 	useLocalToken := strings.ToLower(os.Getenv("LT_LOCAL_TOKEN")) == "true"
 
+	// Resolve engine choice: flag > env > default
+	engineName := *engineFlag
+	if engineName == "" {
+		engineName = os.Getenv("LT_ENGINE")
+	}
+	if engineName == "" {
+		engineName = "local"
+	}
+	if engineName != "local" && engineName != "aws" {
+		log.Fatalf("Invalid --engine value %q (must be 'local' or 'aws')", engineName)
+	}
+
+	// Resolve whisper model path / size (only relevant for local engine)
+	modelPath := *modelFlag
+	if modelPath == "" {
+		modelPath = os.Getenv("LT_WHISPER_MODEL")
+	}
+	modelSize := *modelSizeFlag
+	if modelSize == "" {
+		modelSize = os.Getenv("LT_WHISPER_MODEL_SIZE")
+	}
+	if modelSize == "" {
+		modelSize = "base.en"
+	}
+
 	// Print configuration
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Println("Live Translation - Speech-to-Text")
 	fmt.Println(strings.Repeat("=", 60))
 	fmt.Printf("\nServer URL: %s\n", serverURL)
-	fmt.Printf("AWS Region: %s\n", awsRegion)
-	if useLocalToken {
-		fmt.Println("Token Mode: Local AWS credentials")
+	if engineName == "aws" {
+		fmt.Printf("Engine: AWS Transcribe Streaming\n")
+		fmt.Printf("AWS Region: %s\n", awsRegion)
+		if useLocalToken {
+			fmt.Println("Token Mode: Local AWS credentials")
+		} else {
+			fmt.Println("Token Mode: Server-provided session credentials")
+		}
 	} else {
-		fmt.Println("Token Mode: Server-provided session credentials")
+		fmt.Printf("Engine: Local (whisper.cpp)\n")
+		if modelPath != "" {
+			fmt.Printf("Model: %s\n", modelPath)
+		} else {
+			fmt.Printf("Model size: %s (auto-download to ~/.yot/models/)\n", modelSize)
+		}
 	}
 	if verbose {
 		fmt.Println("Verbose: true")
@@ -1338,9 +1032,27 @@ func main() {
 	defer cancel()
 
 	// Create the application
-	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex, awsRegion, verbose, useLocalToken)
+	app, err := NewSpeechToText(ctx, serverURL, apiKey, deviceIndex, awsRegion, verbose, useLocalToken, engineName)
 	if err != nil {
 		log.Fatalf("Error creating application: %v", err)
+	}
+
+	// Initialise the chosen transcription engine
+	switch engineName {
+	case "local":
+		// Ensure the model is available (auto-download if needed)
+		resolvedModel, err := EnsureModel(modelSize, modelPath)
+		if err != nil {
+			log.Fatalf("Failed to prepare whisper model: %v", err)
+		}
+		engine, err := NewWhisperEngine(resolvedModel, "en")
+		if err != nil {
+			log.Fatalf("Failed to initialise whisper engine: %v", err)
+		}
+		app.engine = engine
+		app.modelPath = resolvedModel
+	case "aws":
+		app.engine = NewAWSEngine(app)
 	}
 
 	// Handle interrupt signals (Ctrl-C / SIGTERM) and request graceful shutdown
@@ -1354,9 +1066,11 @@ func main() {
 		// Give a short window for final audio to be sent, then cancel context to force cleanup
 		time.Sleep(500 * time.Millisecond)
 		cancel()
+		// Second Ctrl-C (or SIGTERM) hard-kills the process if graceful shutdown stalls.
+		<-sigChan
+		fmt.Println("Force quit.")
+		os.Exit(1)
 	}()
-
-	// Ctrl-C / SIGTERM handling is the preferred way to stop the program.
 
 	// Run the application
 	if err := app.Run(); err != nil {
