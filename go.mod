@@ -6,10 +6,13 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.39.6
 	github.com/aws/aws-sdk-go-v2/config v1.31.18
 	github.com/aws/aws-sdk-go-v2/service/transcribestreaming v1.32.8
+	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20250101000000-000000000000
 	github.com/gordonklaus/portaudio v0.0.0-20250206071425-98a94950218b
 	github.com/gorilla/websocket v1.5.3
 	github.com/joho/godotenv v1.5.1
 )
+
+replace github.com/ggerganov/whisper.cpp/bindings/go => ./build/whisper-src/bindings/go
 
 require (
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.3 // indirect
