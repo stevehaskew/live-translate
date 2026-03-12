@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.0](https://github.com/stevehaskew/live-translate/compare/v1.1.1...v1.2.0) (2026-03-12)
+
+
+### Features
+
+* add greek language option ([cc47695](https://github.com/stevehaskew/live-translate/commit/cc47695d55cbda0b68c475d159b5bfd58c2063b5)), closes [#101](https://github.com/stevehaskew/live-translate/issues/101)
+* add local transcription with whisper ([6c9ed42](https://github.com/stevehaskew/live-translate/commit/6c9ed429e59adc3ac523c56b579f99347bca309a))
+* config file ingestion for client ([404c431](https://github.com/stevehaskew/live-translate/commit/404c4316ba4ad83b047df2c467360a5e5cba5be7))
+
+
+### Bug Fixes
+
+* add better error handling for aws token expiry ([564e901](https://github.com/stevehaskew/live-translate/commit/564e9011ea95de3e07c138294498b95a156fd928)), closes [#74](https://github.com/stevehaskew/live-translate/issues/74)
+* correct stream handling on token refresh ([79722bd](https://github.com/stevehaskew/live-translate/commit/79722bd7cb55688b0fec6b22f9ed6378fdc76771))
+* fix aws token rotation by implementing dynamic credentials provider ([77110a3](https://github.com/stevehaskew/live-translate/commit/77110a39b7413123cedd5ada76ae452c55a393f3))
+* improved websocket error handling ([2bce76d](https://github.com/stevehaskew/live-translate/commit/2bce76d04d90f1251b63ab1e66c19f66945ac405)), closes [#78](https://github.com/stevehaskew/live-translate/issues/78)
+
 ## [1.1.1](https://github.com/stevehaskew/live-translate/compare/v1.1.0...v1.1.1) (2025-11-15)
 
 
